@@ -2191,6 +2191,14 @@ pub(crate) fn classify_node(
         if let Some(visibility) = visibility_label(language, node, source, &label) {
             metadata.insert("visibility".to_string(), visibility.to_string());
         }
+        // What a Go signature hands back types every `mgr := b.StateMgr()` a
+        // caller writes. terraform binds 1492 of the receivers it could not
+        // place that way, and `StateMgr` alone 245 times.
+        if language == Language::Go
+            && let Some(returns) = go_result_type_name(node, source)
+        {
+            metadata.insert("returns".to_string(), returns);
+        }
         // `#[test] fn a_call_edge_says_what_settled_it` is run by the test
         // harness, which no edge records, and a Rust project keeps its
         // tests beside the code in `#[cfg(test)] mod tests`. Reading them
@@ -3830,6 +3838,12 @@ pub(crate) fn declared_variable_types(
     // terraform's declarations do, a thousand of them `diags`, whose methods
     // are the most ambiguous calls in the repository. A declaration that names
     // its type is worth more than the signature it shadows.
+    // A name bound to what a call hands back is typed by the callee's
+    // signature, which this file may not hold: the call is recorded and the
+    // join happens where every definition is known. An explicit `var x T`
+    // and a composite literal both state the type outright, so they follow
+    // and win.
+    declared.extend(go_call_result_types(node, source));
     declared.extend(go_declared_var_types(node, source));
     declared.extend(go_composite_literal_types(node, source));
     declared
@@ -4363,6 +4377,79 @@ fn go_composite_literal_type(value: Node<'_>, source: &[u8]) -> Option<String> {
 }
 
 /// Types stated by `var name Type` inside a body.
+/// The type a Go signature hands back, as a name: `func (b *Local)
+/// StateMgr(..) (statemgr.Full, error)` hands back `statemgr.Full`. `error`
+/// is the language's own and names no definition, so a signature that hands
+/// back only that says nothing.
+fn go_result_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let result = node.child_by_field_name("result")?;
+    let stated = if result.kind() == "parameter_list" {
+        let mut cursor = result.walk();
+        result
+            .named_children(&mut cursor)
+            .filter(|child| child.kind() == "parameter_declaration")
+            .filter_map(|child| child.child_by_field_name("type"))
+            .collect::<Vec<_>>()
+    } else {
+        vec![result]
+    };
+    stated
+        .into_iter()
+        .filter_map(|type_node| go_qualified_type_name(type_node, source))
+        .find(|name| name != "error")
+}
+
+/// The names a Go body binds to what a call hands back, recorded as the call
+/// that bound them -- `mgr := b.StateMgr()` leaves `mgr` as `StateMgr()`.
+/// Only a call written as a bare name is recorded: it means a function of the
+/// caller's own package, which is a name the graph can look up.
+fn go_call_result_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared = BTreeMap::new();
+    let Some(body) = node.child_by_field_name("body") else {
+        return declared;
+    };
+    let mut stack = vec![body];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+        if current.kind() != "short_var_declaration" {
+            continue;
+        }
+        let (Some(left), Some(right)) = (
+            current.child_by_field_name("left"),
+            current.child_by_field_name("right"),
+        ) else {
+            continue;
+        };
+        let mut values = right.walk();
+        let values = right.named_children(&mut values).collect::<Vec<_>>();
+        let [value] = values.as_slice() else {
+            continue;
+        };
+        if value.kind() != "call_expression" {
+            continue;
+        }
+        let Some(callee) = value
+            .child_by_field_name("function")
+            .filter(|function| function.kind() == "identifier")
+            .and_then(|function| node_text(function, source))
+        else {
+            continue;
+        };
+        // `mgr, err := f()` hands the first name what the signature states
+        // first; the rest are the error and are left alone.
+        let mut names = left.walk();
+        if let Some(name) = left
+            .named_children(&mut names)
+            .find(|name| name.kind() == "identifier")
+            .and_then(|name| node_text(name, source))
+        {
+            declared.insert(name, format!("{callee}()"));
+        }
+    }
+    declared
+}
+
 fn go_declared_var_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared = BTreeMap::new();
     let Some(body) = node.child_by_field_name("body") else {

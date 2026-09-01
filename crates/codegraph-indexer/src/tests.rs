@@ -19445,3 +19445,47 @@ fn a_csharp_receiver_states_which_read_a_call_means() {
         );
     }
 }
+
+#[test]
+fn a_go_binding_takes_the_type_its_call_hands_back() {
+    // `mgr := b.StateMgr()` says nothing about `mgr` on its own line, and
+    // 4494 of terraform's unplaceable receivers are bound that way. A Go
+    // signature states what it hands back, and a bare call means the
+    // caller's own package, so the two join.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("states")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("states").join("kinds.go"),
+        "package states\n\ntype Alpha struct{}\n\nfunc (a *Alpha) Run() string { return \"a\" }\n\ntype Beta struct{}\n\nfunc (b *Beta) Run() string { return \"b\" }\n\nfunc newAlpha() *Alpha {\n\treturn &Alpha{}\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal").join("states").join("use.go"),
+        "package states\n\nfunc Use() string {\n\ta := newAlpha()\n\treturn a.Run()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let alpha_run = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Run"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("Alpha")
+        })
+        .expect("Alpha.Run");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("a.Run")
+        })
+        .expect("the call through the bound name");
+    assert_eq!(edge.target, alpha_run.id, "the call is Alpha's, not Beta's");
+    assert_eq!(
+        edge.metadata.get("resolution_basis").map(String::as_str),
+        Some("receiver_type")
+    );
+}

@@ -3884,14 +3884,24 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // `mgr := b.StateMgr()` states the receiver's type in the callee's
+        // signature rather than in its own line, so the parser records which
+        // call bound the name and the join happens here, where every
+        // definition is known.
+        let receiver_type = match call.receiver_type.as_deref() {
+            Some(bound_by) if bound_by.ends_with("()") => {
+                what_a_call_hands_back(context, caller_path, bound_by)
+            }
+            stated => stated.map(str::to_string),
+        };
+        let receiver_type = receiver_type.as_deref();
+
         // A receiver whose declared type comes from outside the repository
         // cannot be calling anything in it: `t.Fatalf()` on a `*testing.T` is
         // 7564 of terraform's calls, and reporting them as unresolved suggests
         // a resolver that failed rather than a dependency that left.
-        if let Some((package, _)) = call
-            .receiver_type
-            .as_deref()
-            .and_then(|receiver_type| receiver_type.split_once('.'))
+        if let Some((package, _)) =
+            receiver_type.and_then(|receiver_type| receiver_type.split_once('.'))
             && context
                 .file_import_qualifiers
                 .get(call.span.path.as_str())
@@ -3908,7 +3918,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // qualified — `diags tfdiags.Diagnostics` — the package narrows it the
         // rest of the way: terraform declares `Diagnostics` in more than one,
         // so the owner's name alone still left a choice.
-        if let Some(receiver_type) = call.receiver_type.as_deref()
+        if let Some(receiver_type) = receiver_type
             && targets.len() > 1
         {
             let (package, owner) = match receiver_type.rsplit_once('.') {
@@ -7360,6 +7370,44 @@ pub(crate) fn split_qualified_call(label: &str) -> Option<(&str, &str)> {
         .next()
         .unwrap_or(owner);
     (!owner.is_empty() && !method.is_empty()).then_some((owner, method))
+}
+
+/// What the function a `:=` names hands back. A Go call written as a bare
+/// name means the caller's own package, and a package is a directory, so the
+/// answer is read from the definitions next door. Two definitions of that
+/// name that state different types are two answers, which is no answer.
+fn what_a_call_hands_back(
+    context: &IndexContext,
+    caller_path: Option<&str>,
+    bound_by: &str,
+) -> Option<String> {
+    let callee = bound_by.strip_suffix("()")?;
+    let directory = caller_path
+        .and_then(|path| path.rsplit_once('/'))
+        .map(|(directory, _)| directory)?;
+    let mut handed_back: Option<String> = None;
+    for target in resolve_function_targets(&context.function_symbols, callee) {
+        let Some(node) = graph_node(&context.graph, target) else {
+            continue;
+        };
+        let next_door = node
+            .span
+            .as_ref()
+            .and_then(|span| span.path.rsplit_once('/'))
+            .is_some_and(|(declared_in, _)| declared_in == directory);
+        if !next_door {
+            continue;
+        }
+        let Some(returns) = node.metadata.get("returns") else {
+            continue;
+        };
+        match &handed_back {
+            Some(stated) if stated != returns => return None,
+            Some(_) => {}
+            None => handed_back = Some(returns.clone()),
+        }
+    }
+    handed_back
 }
 
 pub(crate) fn resolve_function_targets(
