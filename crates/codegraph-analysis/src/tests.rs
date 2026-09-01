@@ -2044,6 +2044,53 @@ fn how_a_project_is_laid_out_is_not_a_search_for_the_word_project() {
 }
 
 #[test]
+fn a_question_verb_is_not_a_name_to_search_for() {
+    // "which types does insights use" ends on its verb, so the anchor
+    // guesser took `use` -- and the caller recognised it as a question verb
+    // and then handed that very word to the widened plan, which searched
+    // the project for it and answered with 1017 nodes. `insights` is a name
+    // this project really has, and the caller is the one holding the graph.
+    let mut graph = CodeGraph::new("repo");
+    graph.add_node(NodeKind::Function, "insights");
+    graph.add_node(NodeKind::Function, "unrelated");
+
+    let report = natural_query(
+        &graph,
+        NaturalQueryRequest {
+            question: "which types does insights use".to_string(),
+            compact: false,
+        },
+    )
+    .expect("the question routes");
+    assert!(
+        report.generated_query.contains("insights"),
+        "{}",
+        report.generated_query
+    );
+    assert!(
+        !report.generated_query.contains("use"),
+        "the verb the question is asked with is not a name: {}",
+        report.generated_query
+    );
+
+    // A name the project does not have is still worth searching: that is
+    // what the widened plan is for.
+    let report = natural_query(
+        &graph,
+        NaturalQueryRequest {
+            question: "what depends on lyaml".to_string(),
+            compact: false,
+        },
+    )
+    .expect("the question routes");
+    assert!(
+        report.generated_query.contains("lyaml"),
+        "{}",
+        report.generated_query
+    );
+}
+
+#[test]
 fn the_two_directions_of_a_dependency_question_are_told_apart() {
     // `what depends on X` and `what does X depend on` are opposite
     // questions. The reverse rule declined the second on purpose and

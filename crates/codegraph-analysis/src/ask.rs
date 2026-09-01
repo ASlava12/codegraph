@@ -18,12 +18,34 @@ pub fn natural_query(
     // project: "what routes exist" became `routes handler:exist` and
     // answered with nothing at all, where the question deserved the
     // project's routes. Keep the filter only when the name is really there.
+    // A word the question asks with is not a word to search for either.
+    // The verb was already recognised here and then handed to the widened
+    // plan as its guess, so `which types does insights use` searched the
+    // project for `use` and answered with 1017 nodes. A name the project
+    // does not have is still worth searching -- that is what the widened
+    // plan is for -- but a verb is not a name anyone wrote.
+    let guessed_a_question_verb = plan.anchor_is_guessed
+        && plan
+            .term
+            .as_deref()
+            .is_some_and(natural_query_is_a_question_verb);
     if plan.anchor_is_guessed
-        && plan.term.as_deref().is_some_and(|term| {
-            !graph_names_exactly(graph, term) || natural_query_is_a_question_verb(term)
-        })
+        && (guessed_a_question_verb
+            || plan
+                .term
+                .as_deref()
+                .is_some_and(|term| !graph_names_exactly(graph, term)))
     {
-        plan = widened_plan(&request.question, plan.term.as_deref())?;
+        // `which types does insights use` ends on its verb, so the guesser
+        // took `use`; `insights` is a name this project really has, and a
+        // caller holding the graph is the one that can tell.
+        let named = natural_query_anchor_candidates(&request.question)
+            .into_iter()
+            .find(|word| graph_names_exactly(graph, word));
+        let guess = named
+            .clone()
+            .or_else(|| plan.term.clone().filter(|_| !guessed_a_question_verb));
+        plan = widened_plan(&request.question, guess.as_deref())?;
     }
     let mut alternatives = plan.alternatives.clone();
     let mut result = match query_graph(graph, &plan.generated_query) {
@@ -502,7 +524,8 @@ pub(crate) fn natural_query_plan_with_anchor(
             "пакет",
             "импорт",
         ],
-    ) {
+    ) && !natural_query_asks_about_cycles(&routing)
+    {
         // "what does kong/init.lua import?" names a file, not a package:
         // `packages package:kong/init.lua` matched nothing, because no
         // dependency is called that.
@@ -584,10 +607,7 @@ pub(crate) fn natural_query_plan_with_anchor(
                 "medium".to_string(),
             )
         }
-    } else if natural_query_mentions_any(
-        &routing,
-        &["cycle", "circular", "circle", "цикл", "кольц"],
-    ) {
+    } else if natural_query_asks_about_cycles(&routing) {
         // The graph answers this one outright, and "show me the cycles"
         // used to fall through to a text search that matched nothing.
         if let Some(term) = filter_term.as_deref() {
@@ -845,6 +865,15 @@ pub(crate) fn natural_call_direction(lower: &str, term: Option<&str>) -> &'stati
 /// anything picking it up: it fell through to the package rule, which
 /// answered `packages package:scan_project` with 0 nodes where the caller
 /// reaches 101. Both directions read this, so neither can drift.
+/// Whether the question is about cycles. A cycle is a kind of dependency,
+/// so `show me the dependency cycles` reached the package rule first and
+/// answered with this project's 258 packages. Naming the cycle settles it,
+/// the way naming calling does -- and the package rule reads the same
+/// phrase, so the two cannot drift.
+pub(crate) fn natural_query_asks_about_cycles(routing: &str) -> bool {
+    natural_query_mentions_any(routing, &["cycle", "circular", "circle", "цикл", "кольц"])
+}
+
 pub(crate) fn natural_query_asks_forward_dependency(routing: &str) -> bool {
     (routing.contains("does") && routing.contains("depend"))
         || routing.contains("dependencies of")
@@ -887,6 +916,26 @@ pub(crate) fn natural_query_candidates(question: &str) -> Vec<String> {
 /// is a guess by construction — the last word that is not a stop word —
 /// so callers must confirm the project has something by that name before
 /// filtering on it.
+/// Every word of the question that could stand for a name, in the order
+/// the question wrote them. The guesser takes the last one, which is right
+/// when the question ends on its subject and wrong when it ends on its
+/// verb; a caller holding the graph can tell those apart by asking which
+/// word the project actually names.
+pub(crate) fn natural_query_anchor_candidates(question: &str) -> Vec<String> {
+    question
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|character: char| {
+                !character.is_alphanumeric() && !matches!(character, '_' | '.' | '/' | '-')
+            })
+        })
+        .filter(|token| token.chars().count() >= 3)
+        .filter(|token| !natural_query_stop_word(&token.to_lowercase()))
+        .filter(|token| !natural_query_is_a_question_verb(token))
+        .map(ToString::to_string)
+        .collect()
+}
+
 pub(crate) fn natural_query_guessed_anchor(question: &str) -> Option<String> {
     let words = question
         .split_whitespace()
