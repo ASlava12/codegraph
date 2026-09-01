@@ -141,7 +141,7 @@ fn resolve_scan_root_allows_configured_projects() {
     let root = root.canonicalize().unwrap();
     let sibling = sibling.canonicalize().unwrap();
     let outside = outside.canonicalize().unwrap();
-    let state = test_state(root.clone(), vec![sibling.clone()], false);
+    let state = test_state(root.to_path_buf(), vec![sibling.clone()], false);
 
     assert_eq!(resolve_scan_root(&state, None).unwrap(), root);
     assert_eq!(
@@ -458,7 +458,7 @@ fn capability_features_reflect_cache_availability() {
 async fn capabilities_publish_runtime_graph_and_query_limits() {
     let root = temp_server_root();
     fs::create_dir_all(&root).unwrap();
-    let Json(response) = capabilities_api(State(test_state(root.clone(), vec![], false)))
+    let Json(response) = capabilities_api(State(test_state(root.to_path_buf(), vec![], false)))
         .await
         .expect("capabilities response");
 
@@ -521,7 +521,7 @@ async fn probes_return_lightweight_runtime_status() {
     let root = temp_server_root();
     fs::create_dir_all(&root).unwrap();
 
-    let Json(live) = live_api(State(test_state(root.clone(), vec![], false))).await;
+    let Json(live) = live_api(State(test_state(root.to_path_buf(), vec![], false))).await;
     assert_eq!(live.status, "ok");
     assert_eq!(live.server_version, SERVER_VERSION);
     assert_eq!(live.api_version, 1);
@@ -529,7 +529,7 @@ async fn probes_return_lightweight_runtime_status() {
     assert_eq!(live.root, root.display().to_string());
     assert!(!live.cache_enabled);
 
-    let Json(ready) = ready_api(State(test_state(root.clone(), vec![], false)))
+    let Json(ready) = ready_api(State(test_state(root.to_path_buf(), vec![], false)))
         .await
         .expect("ready probe");
     assert_eq!(ready.status, "ready");
@@ -579,7 +579,7 @@ fn project_report_query_limits_are_clamped_to_capabilities() {
 async fn query_api_rejects_oversized_query_before_scan() {
     let root = temp_server_root();
     fs::create_dir_all(&root).unwrap();
-    let state = test_state(root.clone(), vec![], false);
+    let state = test_state(root.to_path_buf(), vec![], false);
     let query = GraphQuery {
         path: None,
         q: "x".repeat(MAX_GRAPH_QUERY_LENGTH + 1),
@@ -606,7 +606,7 @@ async fn entrypoints_api_honours_a_limit_and_leads_with_programs() {
     )
     .unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let all = entrypoints_api(
         State(state.clone()),
@@ -646,11 +646,9 @@ async fn every_answer_is_built_from_the_same_graph() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
-    let graph = scan_graph(&state, Some(root.as_path()))
-        .await
-        .expect("graph");
+    let graph = scan_graph(&state, Some(&*root)).await.expect("graph");
     let repository = graph
         .nodes
         .iter()
@@ -669,7 +667,7 @@ async fn every_answer_is_built_from_the_same_graph() {
     let Json(card) = node_card_api(
         State(state),
         ApiQuery(NodeCardQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             node_id: format!("n{}", repository.id.0),
             edge_limit: None,
             source_context: None,
@@ -698,11 +696,9 @@ async fn the_api_opens_a_node_by_its_durable_id() {
         "fn main() {\n    helper();\n}\n\nfn helper() {}\n",
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
-    let graph = scan_graph(&state, Some(root.as_path()))
-        .await
-        .expect("graph");
+    let graph = scan_graph(&state, Some(&*root)).await.expect("graph");
     let helper = graph
         .nodes
         .iter()
@@ -717,7 +713,7 @@ async fn the_api_opens_a_node_by_its_durable_id() {
     let Json(card) = node_card_api(
         State(state),
         ApiQuery(NodeCardQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             node_id: stable_id,
             edge_limit: None,
             source_context: None,
@@ -737,9 +733,9 @@ async fn trace_apis_say_which_name_matched_nothing() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
     let query = |label: Option<String>, node_id: Option<String>| TraceQuery {
-        path: Some(root.clone()),
+        path: Some(root.to_path_buf()),
         label,
         node_id,
         depth: Some(2),
@@ -781,9 +777,9 @@ async fn workflow_api_says_which_name_matched_nothing() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
     let query = |label: Option<String>, node_id: Option<String>| WorkflowQuery {
-        path: Some(root.clone()),
+        path: Some(root.to_path_buf()),
         label,
         node_id,
         depth: Some(3),
@@ -836,12 +832,12 @@ fn helper() {
 "#,
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let Json(report) = workflow_api(
         State(state),
         ApiQuery(WorkflowQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             label: Some("main".to_string()),
             node_id: None,
             depth: Some(3),
@@ -900,12 +896,12 @@ fn ready() -> bool {
 "#,
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let Json(report) = journey_api(
         State(state.clone()),
         ApiQuery(JourneyQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             from: "main".to_string(),
             to: "load_config".to_string(),
             depth: Some(8),
@@ -934,7 +930,7 @@ fn ready() -> bool {
     let error = journey_api(
         State(state),
         ApiQuery(JourneyQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             from: "ghost".to_string(),
             to: "load_config".to_string(),
             depth: Some(8),
@@ -987,12 +983,12 @@ async fn source_api_requires_path_and_file() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let preview = source(
         State(state.clone()),
         ApiQuery(SourceQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             file: Some(PathBuf::from("src/main.rs")),
             start_line: Some(1),
             end_line: Some(1),
@@ -1012,7 +1008,7 @@ async fn source_api_requires_path_and_file() {
     let error = source(
         State(state.clone()),
         ApiQuery(SourceQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             file: None,
             start_line: None,
             end_line: None,
@@ -1035,7 +1031,7 @@ async fn node_card_api_accepts_n_prefixed_ids() {
         "fn main() {\n    helper();\n}\npub fn helper() {}\n",
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let graph = scan_graph(&state, Some(&root)).await.expect("graph");
     let helper_id = graph
@@ -1048,7 +1044,7 @@ async fn node_card_api_accepts_n_prefixed_ids() {
     let card = node_card_api(
         State(state.clone()),
         ApiQuery(NodeCardQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             node_id: format!("n{}", helper_id.0),
             edge_limit: None,
             source_context: None,
@@ -1063,7 +1059,7 @@ async fn node_card_api_accepts_n_prefixed_ids() {
     let context = node_context_api(
         State(state.clone()),
         ApiQuery(NodeContextQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             node_id: helper_id.0.to_string(),
             edge_limit: None,
         }),
@@ -1075,7 +1071,7 @@ async fn node_card_api_accepts_n_prefixed_ids() {
     let error = node_card_api(
         State(state.clone()),
         ApiQuery(NodeCardQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             node_id: "nope".to_string(),
             edge_limit: None,
             source_context: None,
@@ -1104,12 +1100,12 @@ async fn pr_impact_api_maps_explicit_changed_files() {
             "// FIXME: helper still calls a missing function\npub fn helper() {\n    missing_helper();\n}\n",
         )
         .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let response = pr_impact_api(
         State(state.clone()),
         ApiQuery(PrImpactQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             base: None,
             files: Some("src/util.rs, docs/none.md".to_string()),
             ci_state: Some("passing".to_string()),
@@ -1156,12 +1152,12 @@ fn helper() {}
 "#,
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let response = mcp_api(
         State(state.clone()),
         ApiQuery(McpQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
         }),
         r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string(),
     )
@@ -1178,7 +1174,7 @@ fn helper() {}
     let response = mcp_api(
             State(state.clone()),
             ApiQuery(McpQuery {
-                path: Some(root.clone()),
+                path: Some(root.to_path_buf()),
             }),
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"query_graph","arguments":{"query":"nodes kind:function label:main"}}}"#
                 .to_string(),
@@ -1198,7 +1194,7 @@ fn helper() {}
     let response = mcp_api(
         State(state.clone()),
         ApiQuery(McpQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
         }),
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.to_string(),
     )
@@ -1213,7 +1209,7 @@ fn helper() {}
     let response = mcp_api(
         State(state.clone()),
         ApiQuery(McpQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
         }),
         "[]".to_string(),
     )
@@ -1225,7 +1221,7 @@ fn helper() {}
     let response = mcp_api(
         State(state),
         ApiQuery(McpQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
         }),
         "{not json".to_string(),
     )
@@ -1263,12 +1259,12 @@ fn helper() {}
 "#,
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let Json(report) = entrypoint_workflows_api(
         State(state),
         ApiQuery(EntrypointWorkflowQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             search: Some("api".to_string()),
             entrypoint_kind: None,
             depth: Some(2),
@@ -1299,7 +1295,7 @@ fn helper() {}
     );
 
     let entrypoint_kind_query = |entrypoint_kind: &str| EntrypointWorkflowQuery {
-        path: Some(root.clone()),
+        path: Some(root.to_path_buf()),
         search: None,
         entrypoint_kind: Some(entrypoint_kind.to_string()),
         depth: Some(2),
@@ -1313,7 +1309,7 @@ fn helper() {}
         compact: None,
         max_fanout: None,
     };
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
     let Json(binary_report) = entrypoint_workflows_api(
         State(state.clone()),
         ApiQuery(entrypoint_kind_query("binary")),
@@ -1353,12 +1349,12 @@ fn helper() {}
 "#,
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let Json(report) = workflow_query_api(
         State(state),
         ApiQuery(WorkflowQuerySliceQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             q: "nodes kind:function search:main".to_string(),
             depth: Some(2),
             block_limit: Some(20),
@@ -1399,7 +1395,7 @@ fn helper() {}
 async fn source_search_api_rejects_oversized_query_before_scan() {
     let root = temp_server_root();
     fs::create_dir_all(&root).unwrap();
-    let state = test_state(root.clone(), vec![], false);
+    let state = test_state(root.to_path_buf(), vec![], false);
     let query = SourceSearchQuery {
         path: None,
         q: "x".repeat(MAX_SOURCE_SEARCH_QUERY_LENGTH + 1),
@@ -2169,12 +2165,12 @@ async fn a_published_default_is_the_one_the_handler_uses() {
     let root = temp_server_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
 
     let Json(card) = node_card_api(
         State(state),
         ApiQuery(NodeCardQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             node_id: "n1".to_string(),
             edge_limit: None,
             source_context: None,
@@ -2222,9 +2218,9 @@ async fn the_schema_describes_the_fields_the_responses_carry() {
         "fn main() {\n    helper();\n}\n\nfn helper() {}\n",
     )
     .unwrap();
-    let state = test_state(root.clone(), vec![], true);
+    let state = test_state(root.to_path_buf(), vec![], true);
     let query = || ScanQuery {
-        path: Some(root.clone()),
+        path: Some(root.to_path_buf()),
         limit: None,
     };
 
@@ -2242,7 +2238,7 @@ async fn the_schema_describes_the_fields_the_responses_carry() {
     let Json(trace_body) = trace_api(
         State(state.clone()),
         ApiQuery(TraceQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             label: Some("main".to_string()),
             node_id: None,
             depth: Some(2),
@@ -2253,7 +2249,7 @@ async fn the_schema_describes_the_fields_the_responses_carry() {
     let Json(workflow_body) = workflow_api(
         State(state),
         ApiQuery(WorkflowQuery {
-            path: Some(root.clone()),
+            path: Some(root.to_path_buf()),
             label: Some("main".to_string()),
             node_id: None,
             depth: Some(2),
@@ -3937,13 +3933,46 @@ fn status_message(status: ScanJobStatus) -> String {
     .to_string()
 }
 
-fn temp_server_root() -> PathBuf {
+/// A test's server root, removed when the test ends. Eight tests built one
+/// and never removed it, and a test that panics never reaches its own
+/// cleanup line either. The process id joins the name for the same reason
+/// the other suites carry it: two test binaries must not pick one path.
+struct TempServerRoot {
+    path: PathBuf,
+}
+
+impl std::ops::Deref for TempServerRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for TempServerRoot {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempServerRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn temp_server_root() -> TempServerRoot {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("codegraph-server-test-{nanos}-{id}"))
+    TempServerRoot {
+        path: std::env::temp_dir().join(format!(
+            "codegraph-server-test-{}-{nanos}-{id}",
+            std::process::id()
+        )),
+    }
 }
 
 #[tokio::test]

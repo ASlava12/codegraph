@@ -4,7 +4,7 @@
 use super::*;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use codegraph_core::{CodeGraph, Confidence, EdgeKind, NodeId, NodeKind};
 use codegraph_parser::{Language, ParsedItemKind};
@@ -976,7 +976,7 @@ fn scan_project_uses_persistent_parse_cache_records() {
     fs::create_dir_all(root.join("src")).unwrap();
     let source_path = root.join("src").join("main.rs");
     fs::write(&source_path, "fn main() {}\n").unwrap();
-    let options = IndexOptions::default().with_parse_cache_dir(cache_dir.clone());
+    let options = IndexOptions::default().with_parse_cache_dir(cache_dir.to_path_buf());
 
     let graph = scan_project(&root, &options).unwrap();
     let stamp = file_stamp(&source_path).unwrap();
@@ -15882,16 +15882,80 @@ fn has_entrypoint_reference(
     })
 }
 
-fn temp_project_root() -> PathBuf {
+/// A test's project directory, removed when the test ends.
+///
+/// Twenty-five tests built one and never removed it, and a test that panics
+/// never reaches its own cleanup line either; one run leaked 31 directories
+/// and 21437 of them had collected in the system temp directory. A root that
+/// cleans up after itself cannot be forgotten by the next test written.
+struct TempProjectRoot {
+    path: PathBuf,
+}
+
+impl std::ops::Deref for TempProjectRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for TempProjectRoot {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempProjectRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn temp_project_root() -> TempProjectRoot {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "codegraph-indexer-test-{}-{nanos}-{id}",
-        std::process::id()
-    ))
+    TempProjectRoot {
+        path: std::env::temp_dir().join(format!(
+            "codegraph-indexer-test-{}-{nanos}-{id}",
+            std::process::id()
+        )),
+    }
+}
+
+#[test]
+fn a_test_root_takes_itself_away() {
+    // 21437 directories had collected in the system temp directory because 25
+    // tests built a root and never removed it, and a test that panics never
+    // reaches its own cleanup line. The root removes itself instead, on the
+    // way out of the test either way.
+    let path = {
+        let root = temp_project_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        assert!(root.exists());
+        root.to_path_buf()
+    };
+    assert!(
+        !path.exists(),
+        "the root is gone once the test lets go of it"
+    );
+
+    let panicked = std::panic::catch_unwind(|| {
+        let root = temp_project_root();
+        fs::create_dir_all(&root).unwrap();
+        panic!("{}", root.display());
+    });
+    let message = panicked.expect_err("the closure panics");
+    let path = PathBuf::from(
+        message
+            .downcast_ref::<String>()
+            .expect("the panic carries the path"),
+    );
+    assert!(!path.exists(), "a panicking test leaves no root behind");
 }
 
 #[test]
@@ -16451,7 +16515,7 @@ fn parse_facts_from_another_build_are_not_reused() {
     fs::create_dir_all(root.join("src")).unwrap();
     let source_path = root.join("src").join("main.rs");
     fs::write(&source_path, "fn main() {}\n").unwrap();
-    let options = IndexOptions::default().with_parse_cache_dir(cache_dir.clone());
+    let options = IndexOptions::default().with_parse_cache_dir(cache_dir.to_path_buf());
 
     scan_project(&root, &options).unwrap();
     let stamp = file_stamp(&source_path).unwrap();

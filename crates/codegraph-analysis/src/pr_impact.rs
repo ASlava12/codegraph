@@ -426,7 +426,34 @@ mod tests {
 
     static DIR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-    fn temp_dir(kind: &str) -> PathBuf {
+    /// A fixture directory, removed when the test ends: three of these tests
+    /// built one and never removed it, and a panicking test never reaches its
+    /// own cleanup line.
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = Path;
+
+        fn deref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl AsRef<Path> for TempDir {
+        fn as_ref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn temp_dir(kind: &str) -> TempDir {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock after epoch")
@@ -437,7 +464,7 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir_all(&dir).expect("temp dir");
-        dir
+        TempDir { path: dir }
     }
 
     #[test]
