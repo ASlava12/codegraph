@@ -3760,6 +3760,48 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 }
             }
         }
+        // OCaml names a module after the file that holds it, and that is
+        // enough to find a definition rather than only to narrow between
+        // several: `List.map` is `map` in list.ml. The rule was already
+        // being used the second way and settles 11214 of dune's ambiguous
+        // calls, but a call with no candidate at all never reached it, so
+        // dune's own `stdune` answered none of its 683 `List.map`.
+        if targets.is_empty()
+            && let Some((module, method)) = split_qualified_call(&call.label)
+        {
+            let in_module_file: Vec<NodeId> =
+                resolve_function_targets(&context.function_symbols, method)
+                    .into_iter()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.metadata.get("language"))
+                            .is_some_and(|language| language == &call.language)
+                    })
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.span.as_ref())
+                            .is_some_and(|span| {
+                                module_named_file(&call.language, &span.path, module)
+                            })
+                    })
+                    // Looking a name up again must not walk around what the
+                    // first look-up refused: the program does not call its
+                    // own suite, however the module is named.
+                    .filter(|target| {
+                        caller_is_test
+                            || graph_node(&context.graph, *target)
+                                .and_then(|node| node.span.as_ref())
+                                .is_none_or(|span| {
+                                    !is_test_like_source_path(&span.path)
+                                        || is_shipped_but_not_written(&span.path)
+                                })
+                    })
+                    .collect();
+            if !in_module_file.is_empty() {
+                targets = in_module_file;
+                basis = "module_file";
+            }
+        }
         let mut ambiguous_candidates_are_types = false;
         if targets.is_empty() {
             let type_targets = resolve_function_targets(&context.type_symbols, &call.label)

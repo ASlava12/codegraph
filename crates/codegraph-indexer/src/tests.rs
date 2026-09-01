@@ -3067,6 +3067,50 @@ fn a_php_use_says_whose_class_a_bare_name_means() {
 }
 
 #[test]
+fn a_module_names_the_file_that_holds_it_even_with_nothing_to_narrow() {
+    // OCaml names a module after its file, and the rule was being used
+    // only to choose between candidates. A call with no candidate at all
+    // never reached it, so dune's own stdune answered none of its 683
+    // `List.map`: 689 findings of that kind went away, and `Pp.textf`
+    // reached the vendored pp it names 516 times.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("lib").join("list.ml"),
+        "let map f xs = List.rev (List.rev_map f xs)\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("lib").join("run.ml"),
+        "let all xs = List.map (fun x -> x) xs\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let edge = graph.edges.iter().find(|edge| {
+        edge.kind == EdgeKind::Calls
+            && edge.metadata.get("call_label").map(String::as_str) == Some("List.map")
+    });
+    assert_eq!(
+        edge.and_then(|edge| edge.metadata.get("resolution").cloned())
+            .as_deref(),
+        Some("resolved"),
+        "the module names the file that holds it"
+    );
+    // A project that declares its own `list.ml` means that one, not the
+    // standard library's: 112 of dune's calls read as OCaml's `List` and
+    // are its own stdune.
+    let target = edge
+        .and_then(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .and_then(|node| node.span.as_ref())
+        .map(|span| span.path.clone());
+    assert_eq!(target.as_deref(), Some("lib/list.ml"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_php_test_case_gets_its_assertions_from_the_class_it_extends() {
     // `$this->assertSame(..)` is PHPUnit's, reached through the class the
     // test extends, and `$mock->shouldReceive(..)` is Mockery's: guzzle
