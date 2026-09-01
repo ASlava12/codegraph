@@ -780,6 +780,34 @@ fn test_runner_provides_call(language: &str, path: &str, label: &str) -> bool {
         // package:test hands a Dart suite its cases and its matchers, and
         // the `http` package writes 470 of them: `test`, `group`,
         // `expect`, `setUp`, `throwsA`.
+        // testthat is R's harness and its vocabulary is closed: every
+        // assertion is an `expect_*`, and the blocks around them are named
+        // outright. dplyr writes 418 of these and every one sits under
+        // `tests/`.
+        "r" => {
+            label.starts_with("expect_")
+                || matches!(
+                    label,
+                    "test_that"
+                        | "describe"
+                        | "it"
+                        | "expect"
+                        | "skip"
+                        | "skip_if"
+                        | "skip_if_not"
+                        | "skip_if_not_installed"
+                        | "skip_on_cran"
+                        | "skip_on_ci"
+                        | "skip_on_os"
+                        | "succeed"
+                        | "fail"
+                        | "verify_output"
+                        | "local_edition"
+                        | "local_reproducible_output"
+                        | "with_mocked_bindings"
+                        | "local_mocked_bindings"
+                )
+        }
         "dart" => {
             matches!(
                 label,
@@ -3999,7 +4027,12 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 // resolver failed where nothing was ever there to find.
                 // Not one of redis's 424 or shellcheck's 58 unresolved
                 // shell calls names a function either project declares.
-                let comes_from_the_environment = call.language == "bash";
+                let comes_from_the_environment = call.language == "bash"
+                    // `lifecycle::signal_stage` names the package that
+                    // answers it, and it is not this one. dplyr writes 189
+                    // such calls and reporting them says a resolver failed
+                    // to find what the source says is elsewhere.
+                    || (call.language == "r" && call.label.contains("::"));
                 let resolution = if is_builtin {
                     "builtin"
                 } else if inherits_from_outside || comes_from_the_environment {

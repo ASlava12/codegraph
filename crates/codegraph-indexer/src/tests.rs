@@ -9259,6 +9259,57 @@ fn a_contract_is_not_a_function_its_methods_are_local_to() {
 }
 
 #[test]
+fn testthat_hands_an_r_suite_its_assertions() {
+    // testthat is R's harness and its vocabulary is closed: every assertion
+    // is an `expect_*` and the blocks around them are named outright. dplyr
+    // writes 418 of them and every one sits under `tests/`. `pkg::fn` names
+    // the package that answers it, which is not this one -- 189 more.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("R")).unwrap();
+    fs::create_dir_all(root.join("tests").join("testthat")).unwrap();
+    fs::write(root.join("DESCRIPTION"), "Package: demo\nVersion: 0.1.0\n").unwrap();
+    fs::write(
+        root.join("R").join("select.R"),
+        "select_columns <- function(data) {\n  lifecycle::signal_stage(\"experimental\", \"select_columns()\")\n  data\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests").join("testthat").join("test-select.R"),
+        "test_that(\"it keeps the data\", {\n  expect_equal(select_columns(1), 1)\n  expect_snapshot(select_columns(2))\n})\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge.metadata.get("call_label").map(String::as_str) == Some(label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+    };
+    for harness in ["test_that", "expect_equal", "expect_snapshot"] {
+        assert_eq!(
+            resolution_of(harness).as_deref(),
+            Some("builtin"),
+            "the harness provides {harness}"
+        );
+    }
+    assert_eq!(
+        resolution_of("lifecycle::signal_stage").as_deref(),
+        Some("external"),
+        "the source names the package that answers it"
+    );
+    assert_eq!(
+        resolution_of("select_columns").as_deref(),
+        Some("resolved"),
+        "while the package's own function is the package's"
+    );
+}
+
+#[test]
 fn a_nix_file_takes_lib_and_pkgs_from_whoever_imports_it() {
     // A nix file is a function: `{ config, lib, pkgs, ... }:` says what its
     // caller supplies, so `lib.optionalAttrs` names something inside a
