@@ -3505,11 +3505,18 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             let mut links = call.label.split('.').collect::<Vec<_>>();
             links.pop();
             links.len() >= 2
-                && links.iter().all(|link| {
-                    link.chars()
-                        .next()
-                        .is_some_and(|first| first.is_lowercase() || first == '_')
-                })
+                // A Go package is lowercase and a Go type is not written in
+                // front of a call, so two dots there are always a field
+                // reached through a value, whatever the case of its name:
+                // gqlgen's generated stubs call `r.QueryResolver.EchoIntToInt`,
+                // a func held in a field, and the file answered with the very
+                // method the call sits in.
+                && (call.language == "go"
+                    || links.iter().all(|link| {
+                        link.chars()
+                            .next()
+                            .is_some_and(|first| first.is_lowercase() || first == '_')
+                    }))
         };
         let local_targets = caller_path
             .map(|path| {
@@ -3741,6 +3748,9 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // call bound the name and the join happens here, where every
         // definition is known.
         let receiver_type = match call.receiver_type.as_deref() {
+            // The type stated for `s` says nothing about `s.mu.Lock`: the
+            // method belongs to the field, and the chain is what says so.
+            Some(_) if written_through_a_chain_of_values => None,
             Some(bound_by) if bound_by.ends_with("()") => {
                 // The name in front may be a package rather than a value, and
                 // then it is the file's imports that say which directory
@@ -4099,6 +4109,44 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 }
             }
         }
+        // The type a field chain names is written unqualified, and an
+        // unqualified type name in Go means the caller's own package:
+        // terraform declares `LocalValue` in two of them, and
+        // `v.LocalValue.String` is the one written next door. Only a chain
+        // whose type the owner rule already recognised is narrowed this way:
+        // where the name in front is a field rather than a type, the package
+        // holds several `Close` and picking one invents a cycle.
+        if call.language == "go"
+            && written_through_a_chain_of_values
+            && basis == "owner_type"
+            && targets.len() > 1
+            && let Some((directory, _)) = caller_path.and_then(|path| path.rsplit_once('/'))
+        {
+            let same_package = targets
+                .iter()
+                .copied()
+                // The definition the call sits in is the nearest candidate
+                // the package would reach for, and it is not what a field
+                // hands back: gqlgen writes `r.QueryResolver.Users` inside
+                // `stubQuery.Users`, which the package would answer with
+                // itself.
+                .filter(|target| *target != call.caller)
+                .filter(|target| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.span.as_ref())
+                        .is_some_and(|span| {
+                            span.path
+                                .rsplit_once('/')
+                                .is_some_and(|(candidate, _)| candidate == directory)
+                        })
+                })
+                .collect::<Vec<_>>();
+            if !same_package.is_empty() {
+                targets = same_package;
+                basis = "package";
+            }
+        }
+
         // OCaml names a module after the file that holds it, and that is
         // enough to find a definition rather than only to narrow between
         // several: `List.map` is `map` in list.ml. The rule was already

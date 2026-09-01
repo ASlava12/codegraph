@@ -19638,3 +19638,47 @@ fn a_scala_parameter_states_which_eqv_a_call_means() {
     );
     assert_ne!(edge.target, eqv_of("ArrayInstances"));
 }
+
+#[test]
+fn a_go_chain_is_a_field_whatever_the_case_of_its_name() {
+    // gqlgen's generated stubs hold a func in a field named after the
+    // interface -- `r.QueryResolver.Users(ctx)` -- and the file answered
+    // with the very method the call sits in. A Go package is lowercase and
+    // a type is not written in front of a call, so two dots are a field.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("stub")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("stub").join("stub.go"),
+        "package stub\n\ntype Stub struct {\n\tQueryResolver struct {\n\t\tUsers func() string\n\t}\n}\n\ntype stubQuery struct{ *Stub }\n\nfunc (r *stubQuery) Users() string {\n\treturn r.QueryResolver.Users()\n}\n",
+    )
+    .unwrap();
+    // A second definition of the name, so the name alone settles nothing.
+    fs::create_dir_all(root.join("internal").join("real")).unwrap();
+    fs::write(
+        root.join("internal").join("real").join("resolver.go"),
+        "package real\n\ntype Resolver struct{}\n\nfunc (r *Resolver) Users() string {\n\treturn \"\"\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let users_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Users"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.Users"))
+            .id
+    };
+    let own = users_of("stubQuery");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == own),
+        "a call through a field is not the method it is written in"
+    );
+}
