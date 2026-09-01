@@ -19351,3 +19351,45 @@ fn scan_coverage_says_what_it_passed_over() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_call_through_a_field_is_not_the_callers_own_method() {
+    // `s.state.Module()` reaches the method through a field, so the name
+    // belongs to the field's type, not to the caller's. terraform answered
+    // 360 such calls with a method of the calling file: `s.mu.Lock` with the
+    // caller's own `Lock`, `s.state.Module` with `SyncState.Module` where the
+    // field is a `*State`.
+    let root = temp_project_root();
+    fs::create_dir_all(&*root).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("state.go"),
+        "package app\n\ntype State struct{}\n\nfunc (s *State) Module(addr string) string {\n\treturn addr\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("sync.go"),
+        "package app\n\nimport \"sync\"\n\ntype SyncState struct {\n\tstate *State\n\tmu    sync.Mutex\n}\n\nfunc (s *SyncState) Module(addr string) string {\n\treturn s.state.Module(addr)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let own = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Module"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("sync.go"))
+        })
+        .expect("the file's own Module");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == own.id),
+        "a call through a field is not answered by the caller's own method"
+    );
+}

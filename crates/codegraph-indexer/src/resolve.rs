@@ -3494,6 +3494,23 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                                 .contains(&(path.to_string(), module.to_string()))
                     })
             });
+        // `a.b.method()` reaches the method through a field, so the name
+        // belongs to the type of `b` — which a scan of declarations never
+        // records. The file that holds `a` holds no answer: terraform's
+        // `s.mu.Lock` was answering with the caller's own `State.Lock`, and
+        // `s.state.Module` with `SyncState.Module` when the field is a
+        // `*State`. A chain of lowercase links is a chain of values; an
+        // uppercase link is a name a module or a package can answer for.
+        let written_through_a_chain_of_values = {
+            let mut links = call.label.split('.').collect::<Vec<_>>();
+            links.pop();
+            links.len() >= 2
+                && links.iter().all(|link| {
+                    link.chars()
+                        .next()
+                        .is_some_and(|first| first.is_lowercase() || first == '_')
+                })
+        };
         let local_targets = caller_path
             .map(|path| {
                 language_targets
@@ -3753,7 +3770,10 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             // A call written through a module this file neither is nor
             // declares is that module's, whatever this file happens to
             // name the same way.
-            _ if !local_targets.is_empty() && !names_another_ocaml_module => {
+            _ if !local_targets.is_empty()
+                && !names_another_ocaml_module
+                && !written_through_a_chain_of_values =>
+            {
                 basis = "same_file";
                 local_targets
             }
