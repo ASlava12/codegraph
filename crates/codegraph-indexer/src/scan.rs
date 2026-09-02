@@ -1299,7 +1299,20 @@ pub(crate) fn index_file(
                             .graph
                             .add_edge(file_id, item_id, edge_kind, Confidence::Syntactic);
                     }
-                    if let Some(local_import) = local_import {
+                    // `module Make (Sexp : Sexp) = struct .. open Sexp` names
+                    // the functor's own parameter, and `module type Sexp`
+                    // names a signature this file states: neither is another
+                    // file's module. dune resolved 22 such opens to unrelated
+                    // files, and one of them closed a dependency cycle
+                    // between stdune and the csexp it vendors.
+                    let names_something_this_file_binds = language == Language::OCaml
+                        && item.kind == ParsedItemKind::Import
+                        && source_text
+                            .as_deref()
+                            .is_some_and(|source| ocaml_module_bound_in_file(source, &item.label));
+                    if names_something_this_file_binds {
+                        // nothing to resolve: the name is this file's own
+                    } else if let Some(local_import) = local_import {
                         context.pending_local_imports.push(PendingLocalImport {
                             import_node: item_id,
                             target: local_import.target,

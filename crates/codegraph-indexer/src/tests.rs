@@ -20407,3 +20407,45 @@ fn a_lua_module_hands_out_what_another_declares() {
         Some("module_re_export")
     );
 }
+
+#[test]
+fn an_ocaml_open_of_a_name_the_file_binds_is_not_another_module() {
+    // `module Make (Sexp : Sexp) = struct .. open Sexp` opens the functor's
+    // own parameter. dune's vendored csexp does exactly that, and the graph
+    // answered with stdune's `sexp.ml` -- a dependency cycle between the two
+    // that does not exist.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("src").join("sexp.ml"),
+        "type t = Atom of string\n\nlet to_string t =\n  match t with Atom s -> s\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("csexp.ml"),
+        "module type Sexp = sig\n  type t\nend\n\nmodule Make (Sexp : Sexp) = struct\n  open Sexp\n\n  let hold (x : t) = x\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let sexp_file = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label.ends_with("src/sexp.ml"))
+        .expect("the other file");
+    let linked = graph.edges.iter().any(|edge| {
+        edge.target == sexp_file.id
+            && graph.nodes.iter().any(|node| {
+                node.id == edge.source
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.path.ends_with("csexp.ml"))
+            })
+    });
+    assert!(
+        !linked,
+        "opening a name the file binds itself does not reach another file"
+    );
+}

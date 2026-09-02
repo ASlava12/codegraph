@@ -496,3 +496,28 @@ pub(crate) fn build_product_globs(root: &Path) -> Option<BuildProducts> {
             literal_paths,
         })
 }
+
+/// Whether an OCaml `open X` or `include X` names something the file binds
+/// itself: a signature it states (`module type X`) or a functor parameter
+/// (`module Make (X : S)`). Neither is another file's module, and dune's
+/// vendored csexp opens its own functor parameter `Sexp` -- which the graph
+/// answered with stdune's `sexp.ml`, closing a cycle that does not exist.
+pub fn ocaml_module_bound_in_file(source: &str, label: &str) -> bool {
+    let Some(name) = label
+        .split_whitespace()
+        .nth(1)
+        .map(|name| name.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_' && c != '\''))
+    else {
+        return false;
+    };
+    if name.is_empty() {
+        return false;
+    }
+    source.lines().any(|line| {
+        let line = line.trim();
+        line.strip_prefix("module type ")
+            .is_some_and(|rest| rest.split_whitespace().next() == Some(name))
+            || line.contains(&format!("({name} :"))
+            || line.contains(&format!("({name}:"))
+    })
+}
