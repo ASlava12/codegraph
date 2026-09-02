@@ -3781,6 +3781,20 @@ pub(crate) fn classify_call(
     {
         metadata.insert("receiver_type".to_string(), receiver_type.clone());
     }
+    // The type a Go call is written on is the one the syntax names:
+    // `Action{Type: "a"}.Absolute(..)` and
+    // `toMatch.relSubject.(AbsModuleCall).Instance(..)` each state the owner
+    // outright, and terraform writes 526 such calls that the label alone
+    // left as a choice between every method of that name.
+    if language == Language::Go
+        && !metadata.contains_key("receiver_type")
+        && let Some(function) = node.child_by_field_name("function")
+        && function.kind() == "selector_expression"
+        && let Some(operand) = function.child_by_field_name("operand")
+        && let Some(stated) = go_type_written_at_the_call(operand, source)
+    {
+        metadata.insert("receiver_type".to_string(), stated);
+    }
     // `[NSURL URLWithString:url]` names the class it messages, and the
     // receiver is the only thing that tells Foundation's `URLWithString:`
     // from a method a project declares under the same selector.
@@ -4960,6 +4974,27 @@ fn go_composite_literal_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String,
 
 /// The named type of `Type{...}` or of `&Type{...}`, which is a pointer to
 /// the same type and carries the same methods.
+/// The type a Go call site writes in front of the method: the literal a
+/// value is built from, or the type an assertion states. Both name the
+/// owner where nothing else does.
+fn go_type_written_at_the_call(operand: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut current = operand;
+    loop {
+        match current.kind() {
+            "composite_literal" | "unary_expression" => {
+                return go_composite_literal_type(current, source);
+            }
+            "type_assertion_expression" => {
+                return current
+                    .child_by_field_name("type")
+                    .and_then(|stated| go_qualified_type_name(stated, source));
+            }
+            "parenthesized_expression" => current = current.named_child(0)?,
+            _ => return None,
+        }
+    }
+}
+
 fn go_composite_literal_type(value: Node<'_>, source: &[u8]) -> Option<String> {
     let literal = match value.kind() {
         "composite_literal" => value,

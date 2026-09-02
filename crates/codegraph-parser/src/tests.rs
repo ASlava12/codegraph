@@ -4281,3 +4281,36 @@ public class JValue
     assert_eq!(stated("s.StartsWith").as_deref(), Some("string"));
     assert_eq!(stated("value.GetType").as_deref(), Some("object"));
 }
+
+#[test]
+fn reads_the_type_a_go_call_is_written_on() {
+    // terraform writes 526 calls whose owner the syntax states outright and
+    // the label alone left as a choice between every method of that name.
+    let source = br#"
+package addrs
+
+import "net/url"
+
+func example(toMatch matcher, callStep step) {
+	one := Action{Type: "a", Name: "b1"}.Absolute(RootModuleInstance)
+	two := toMatch.relSubject.(AbsModuleCall).Instance(callStep.InstanceKey)
+	three := (&Action{}).Absolute(RootModuleInstance)
+	four := url.Values{"Action": []string{"x"}}.Encode()
+}
+"#;
+    let parsed = parse_source("internal/addrs/move.go", source, Language::Go).unwrap();
+    let stated = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .and_then(|item| item.metadata.get("receiver_type").cloned())
+    };
+
+    assert_eq!(stated("Absolute").as_deref(), Some("Action"));
+    assert_eq!(stated("Instance").as_deref(), Some("AbsModuleCall"));
+    // The package a type is qualified by is what says the method is not
+    // this repository's: `url.Values{..}.Encode()` is the standard
+    // library's, and terraform read eight such calls as its own.
+    assert_eq!(stated("Encode").as_deref(), Some("url.Values"));
+}
