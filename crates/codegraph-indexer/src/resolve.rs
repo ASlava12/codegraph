@@ -3900,6 +3900,17 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
             stated => stated.map(str::to_string),
         };
+        // A value the call is written on may have been built right there,
+        // and the name that built it is the type: `new JsonTextReader(..).Read()`
+        // and okio's `Buffer().writeUtf8(..)`. Only a name this project
+        // declares as a type counts -- `GetPolicy().Execute()` calls a
+        // method, and C# writes both the same way.
+        let receiver_type = receiver_type.or_else(|| {
+            call.receiver_call
+                .as_deref()
+                .filter(|built| type_node_named(&context.graph, &type_names, built).is_some())
+                .map(str::to_string)
+        });
         let receiver_type = receiver_type.as_deref();
 
         // The same holds for the owner a call writes into its own label:

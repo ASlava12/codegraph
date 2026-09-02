@@ -3888,6 +3888,10 @@ pub(crate) fn classify_call(
         };
         if let Some(receiver_type) = scope.variable_types.get(&object) {
             metadata.insert("receiver_type".to_string(), receiver_type.clone());
+        } else if let Some(handed_back) = name_that_handed_back(&object) {
+            // `(new MockHandler())->append(..)` and `Song::factory()->create()`
+            // build the value the call is written on.
+            metadata.insert("receiver_call".to_string(), handed_back.to_string());
         }
         metadata.insert("receiver_form".to_string(), "value".to_string());
     }
@@ -3913,6 +3917,10 @@ pub(crate) fn classify_call(
                 metadata.insert("receiver_type".to_string(), receiver_type.clone());
             }
             metadata.insert("receiver".to_string(), text);
+        } else if let Some(handed_back) = name_that_handed_back(&text) {
+            // `new Gson().fromJson(..)` builds the value it is written on,
+            // and gson declares fourteen `fromJson`.
+            metadata.insert("receiver_call".to_string(), handed_back.to_string());
         }
         metadata.insert("receiver_form".to_string(), "value".to_string());
     }
@@ -3933,20 +3941,9 @@ pub(crate) fn classify_call(
             metadata.insert("receiver_form".to_string(), "value".to_string());
             // What the value came from, when the source made it by calling
             // a name: `expect(account).to` is written on what `expect`
-            // handed back, and that says whose `to` it is.
-            if let Some(handed_back) = head
-                .trim_end()
-                .trim_end_matches(['.', '>', '-'])
-                .strip_suffix(')')
-                .and_then(|call| call.split_once('('))
-                .map(|(head, _)| head.trim())
-                .filter(|head| {
-                    !head.is_empty()
-                        && head.chars().all(|character| {
-                            character.is_alphanumeric() || character == '_' || character == '!'
-                        })
-                })
-            {
+            // handed back, and `new JsonTextReader(..).Read()` on what the
+            // type built.
+            if let Some(handed_back) = name_that_handed_back(head) {
                 metadata.insert("receiver_call".to_string(), handed_back.to_string());
             }
         }
@@ -4974,6 +4971,63 @@ fn go_composite_literal_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String,
 
 /// The named type of `Type{...}` or of `&Type{...}`, which is a pointer to
 /// the same type and carries the same methods.
+/// The name whose call produced the value written in front of a method.
+/// The arguments are skipped by matching the parentheses from the right, so
+/// `Buffer().writeDecimalLong(value).` answers `writeDecimalLong` rather
+/// than the `Buffer` further back -- a chain hands on whatever its last
+/// link returns, which is not what the first one built.
+fn name_that_handed_back(receiver: &str) -> Option<&str> {
+    // `(new MockHandler())->append(..)` wraps what it builds, and the
+    // parenthesis is not a call's.
+    let mut receiver = receiver.trim();
+    while let Some(inner) = receiver
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .filter(|inner| {
+            let mut depth = 0i32;
+            inner.chars().all(|character| {
+                match character {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                depth >= 0
+            }) && depth == 0
+        })
+    {
+        receiver = inner.trim();
+    }
+    let closed = receiver
+        .trim_end()
+        .trim_end_matches(['.', '>', '-'])
+        .trim_end()
+        .strip_suffix(')')?;
+    let mut depth = 1usize;
+    let mut opened = None;
+    for (index, character) in closed.char_indices().rev() {
+        match character {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    opened = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let name = closed[..opened?]
+        .rsplit(['.', ' ', '>', ':', '(', ',', '=', '!', '&', '|', '{'])
+        .next()?
+        .trim();
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_'))
+    .then_some(name)
+}
+
 /// The type a Go call site writes in front of the method: the literal a
 /// value is built from, or the type an assertion states. Both name the
 /// owner where nothing else does.

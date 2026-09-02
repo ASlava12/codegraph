@@ -4314,3 +4314,51 @@ func example(toMatch matcher, callStep step) {
     // library's, and terraform read eight such calls as its own.
     assert_eq!(stated("Encode").as_deref(), Some("url.Values"));
 }
+
+#[test]
+fn reads_the_name_that_built_the_value_a_call_is_written_on() {
+    // retrofit writes `new Retrofit.Builder().baseUrl(..)` 232 times, and
+    // the label alone left every `baseUrl` in the project as a candidate.
+    let java = br#"
+package retrofit2;
+
+class ExampleTest {
+  void run() {
+    Retrofit retrofit = new Retrofit.Builder().baseUrl(server.url("/")).build();
+    String value = new Gson().fromJson(text, String.class);
+  }
+}
+"#;
+    let parsed = parse_source("retrofit/src/test/ExampleTest.java", java, Language::Java).unwrap();
+    let stated = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .and_then(|item| item.metadata.get("receiver_call").cloned())
+    };
+    assert_eq!(stated("baseUrl").as_deref(), Some("Builder"));
+    assert_eq!(stated("fromJson").as_deref(), Some("Gson"));
+    // A chain hands on what its last link returned, not what the first one
+    // built: `build` is written on what `baseUrl` answered.
+    assert_eq!(stated("build").as_deref(), Some("baseUrl"));
+
+    let php = br#"<?php
+class ExampleTest
+{
+    public function run(): void
+    {
+        (new MockHandler())->append($response);
+    }
+}
+"#;
+    let parsed = parse_source("tests/ExampleTest.php", php, Language::Php).unwrap();
+    let stated = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .and_then(|item| item.metadata.get("receiver_call").cloned())
+    };
+    assert_eq!(stated("append").as_deref(), Some("MockHandler"));
+}
