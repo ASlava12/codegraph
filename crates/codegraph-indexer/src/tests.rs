@@ -306,12 +306,14 @@ fn scan_project_deduplicates_unresolved_call_placeholders() {
         1,
         "two call sites must share one placeholder node"
     );
+    // Nothing in the project is called `custom_helper`, so the placeholder
+    // says the call leaves it rather than that the resolver failed.
     assert_eq!(
         helper_nodes[0]
             .metadata
             .get("resolution")
             .map(String::as_str),
-        Some("unresolved")
+        Some("external")
     );
     let helper_id = helper_nodes[0].id;
     let callers: Vec<_> = graph
@@ -5303,8 +5305,9 @@ fn base_r_is_builtin_but_a_dependency_is_not() {
     assert_eq!(resolution_of("names"), "builtin");
     assert_eq!(resolution_of("UseMethod"), "builtin");
     // `abort` reads as just as fundamental in modern R, but it comes from
-    // rlang — a dependency, and calling it builtin would be a lie.
-    assert_eq!(resolution_of("abort"), "unresolved");
+    // rlang — a dependency, and calling it builtin would be a lie. The
+    // project declares nothing by that name, which is what `external` says.
+    assert_eq!(resolution_of("abort"), "external");
 
     fs::remove_dir_all(root).unwrap();
 }

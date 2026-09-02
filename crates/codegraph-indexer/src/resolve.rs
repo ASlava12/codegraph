@@ -3307,6 +3307,12 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // per call: terraform makes 100000 of them, so the narrowing
         // happens in place.
         let mut language_targets = all_targets;
+        // Nothing in the project is called that. Whatever the call means,
+        // it is not one of these definitions, and saying `unresolved` reads
+        // as a resolver that failed rather than a name that was never here:
+        // mastodon writes 20059 such calls -- `where`, `present?`,
+        // `before_action` -- and terraform 8681.
+        let no_definition_has_that_name = language_targets.is_empty();
         language_targets.retain(|target| {
             graph_node(&context.graph, *target)
                 .and_then(|node| node.metadata.get("language"))
@@ -4453,7 +4459,26 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     || (call.language == "r" && call.label.contains("::"));
                 let resolution = if is_builtin {
                     "builtin"
-                } else if inherits_from_outside || comes_from_the_environment {
+                } else if inherits_from_outside
+                    || comes_from_the_environment
+                    // A call through a value the body binds, and a name the
+                    // file never imports, are each said more precisely
+                    // below; this is the case where nothing more is known
+                    // than that no definition here is called that.
+                    || (no_definition_has_that_name
+                        && !call.callee_is_value
+                        && !name_is_not_imported
+                        // `Transport:send(..)` holds the module in a
+                        // variable, so the name in the label is not the
+                        // name of anything: erlang capitalises variables.
+                        && !(call.language == "erlang"
+                            && call.label.split_once(':').is_some_and(|(module, _)| {
+                                module
+                                    .chars()
+                                    .next()
+                                    .is_some_and(|first| first.is_uppercase())
+                            })))
+                {
                     "external"
                 } else {
                     "unresolved"
