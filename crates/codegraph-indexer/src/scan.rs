@@ -1440,6 +1440,14 @@ pub(crate) fn index_file(
                         &parsed,
                         &local_functions,
                     );
+                    index_framework_commands(
+                        context,
+                        file_id,
+                        label,
+                        language,
+                        source,
+                        &local_functions,
+                    );
                     index_inline_sql_queries(
                         context,
                         file_id,

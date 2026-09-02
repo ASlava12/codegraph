@@ -20646,3 +20646,87 @@ fn a_container_module_the_project_does_not_answer_is_the_languages() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_command_the_framework_runs_is_an_entrypoint() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("Console").join("Commands")).unwrap();
+    fs::create_dir_all(root.join("oscar").join("management").join("commands")).unwrap();
+    // koel declares nineteen of these and nothing in the repository calls
+    // `handle`: `php artisan koel:license:status` does.
+    fs::write(
+        root.join("app")
+            .join("Console")
+            .join("Commands")
+            .join("CheckLicenseStatusCommand.php"),
+        r#"<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+
+class CheckLicenseStatusCommand extends Command
+{
+    protected $signature = 'koel:license:status {--json}';
+    protected $description = 'Check the license status';
+
+    public function handle(): int
+    {
+        return config('lemonsqueezy.plus_product_id') ? 0 : 1;
+    }
+}
+"#,
+    )
+    .unwrap();
+    // django runs `manage.py rebuild_index` the same way.
+    fs::write(
+        root.join("oscar")
+            .join("management")
+            .join("commands")
+            .join("rebuild_index.py"),
+        "from django.core.management.base import BaseCommand\n\n\nclass Command(BaseCommand):\n    def handle(self, *args, **options):\n        return None\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let commands: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("entrypoint_kind").map(String::as_str) == Some("command")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(
+        commands.contains(&"laravel command:koel:license:status"),
+        "{commands:?}"
+    );
+    assert!(
+        commands.contains(&"django command:rebuild_index"),
+        "{commands:?}"
+    );
+    // The method the framework runs is what the entrypoint reaches.
+    let handle = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.kind == NodeKind::Function
+                && node.label == "handle"
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("CheckLicenseStatusCommand.php"))
+        })
+        .expect("the command's handle method");
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.target == handle.id && edge.kind == EdgeKind::References),
+        "the command entrypoint reaches its handler"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

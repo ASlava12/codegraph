@@ -390,6 +390,148 @@ pub(crate) fn index_framework_routes(
     }
 }
 
+/// The commands a framework runs by name, read from what the file states
+/// about itself. koel declares nineteen of these and django-oscar eleven,
+/// and every one of them was a program nothing in the repository starts:
+/// 25 of koel's configuration reads sat behind them.
+pub(crate) fn framework_commands(
+    language: Language,
+    label: &str,
+    source: &str,
+) -> Vec<FrameworkCommand> {
+    match language {
+        Language::Php => php_framework_commands(source),
+        Language::Python => python_framework_commands(label, source),
+        _ => Vec::new(),
+    }
+}
+
+/// Laravel states a command's name in `$signature` and runs its `handle`.
+fn php_framework_commands(source: &str) -> Vec<FrameworkCommand> {
+    let declares_a_command = source.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("class ")
+            && (trimmed.contains("extends Command")
+                || trimmed.contains("extends \\Illuminate\\Console\\Command"))
+    });
+    if !declares_a_command {
+        return Vec::new();
+    }
+    let named = source.lines().find_map(|line| {
+        let trimmed = line.trim_start();
+        let rest = ["protected $signature", "protected $name"]
+            .iter()
+            .find_map(|prefix| trimmed.strip_prefix(prefix))?;
+        let rest = rest.trim_start().strip_prefix('=')?.trim_start();
+        let quote = rest
+            .chars()
+            .next()
+            .filter(|mark| *mark == '\'' || *mark == '"')?;
+        let value = rest[quote.len_utf8()..].split(quote).next()?;
+        // `koel:sync {--force}` names the command and then its arguments.
+        value
+            .split_whitespace()
+            .next()
+            .filter(|name| !name.is_empty())
+            .map(ToString::to_string)
+    });
+    match named {
+        Some(name) => vec![FrameworkCommand {
+            framework: "laravel".to_string(),
+            name,
+            handler: Some("handle".to_string()),
+        }],
+        None => Vec::new(),
+    }
+}
+
+/// Django runs `manage.py <file stem>` for every `Command` under a
+/// `management/commands` directory, and the method it runs is `handle`.
+fn python_framework_commands(label: &str, source: &str) -> Vec<FrameworkCommand> {
+    if !label.contains("management/commands/") {
+        return Vec::new();
+    }
+    let declares_a_command = source
+        .lines()
+        .any(|line| line.trim_start().starts_with("class Command"));
+    let named = label
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.strip_suffix(".py"))
+        .filter(|stem| !stem.is_empty() && *stem != "__init__");
+    match (declares_a_command, named) {
+        (true, Some(name)) => vec![FrameworkCommand {
+            framework: "django".to_string(),
+            name: name.to_string(),
+            handler: Some("handle".to_string()),
+        }],
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn index_framework_commands(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+    language: Language,
+    source: &str,
+    local_functions: &BTreeMap<String, NodeId>,
+) {
+    for command in framework_commands(language, label, source) {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("item_kind".to_string(), "framework_command".to_string());
+        metadata.insert("entrypoint_kind".to_string(), "command".to_string());
+        metadata.insert("source".to_string(), "framework".to_string());
+        metadata.insert("language".to_string(), language.to_string());
+        metadata.insert("framework".to_string(), command.framework.clone());
+        metadata.insert("name".to_string(), command.name.clone());
+        metadata.insert("target".to_string(), label.to_string());
+        let entrypoint_id = context.graph.add_node_with_metadata(
+            NodeKind::Entrypoint,
+            format!("{} command:{}", command.framework, command.name),
+            Some(line_span(label, source, 1)),
+            metadata,
+        );
+        add_edge_once(
+            context,
+            file_id,
+            entrypoint_id,
+            EdgeKind::Contains,
+            Confidence::Syntactic,
+        );
+        let root_id = context.graph.root;
+        add_edge_once(
+            context,
+            root_id,
+            entrypoint_id,
+            EdgeKind::Entrypoint,
+            Confidence::Syntactic,
+        );
+        add_entrypoint_reference(
+            context,
+            entrypoint_id,
+            file_id,
+            "entrypoint_file",
+            "framework_command_file",
+            Confidence::Syntactic,
+            None,
+        );
+        if let Some(handler) = command.handler.as_deref()
+            && let Some(handler_id) = resolve_local_function(local_functions, handler)
+        {
+            add_entrypoint_reference(
+                context,
+                entrypoint_id,
+                handler_id,
+                "entrypoint_function",
+                "framework_command_handler",
+                Confidence::Syntactic,
+                Some(handler),
+            );
+        }
+    }
+}
+
 /// Whether a string reads as the path half of a route declaration.
 fn names_a_route_path(path: &str) -> bool {
     path.starts_with(['/', '*', '^', ':'])

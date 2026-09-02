@@ -611,6 +611,17 @@ pub(crate) struct ManifestEntrypoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// A command a framework runs by name: `php artisan koel:sync` and
+/// `manage.py rebuild_index` start the program as much as a request does,
+/// and nothing else in the repository calls the method they run.
+pub(crate) struct FrameworkCommand {
+    pub(crate) framework: String,
+    /// What the command is called on the command line.
+    pub(crate) name: String,
+    /// The method the framework runs, when the framework names one.
+    pub(crate) handler: Option<String>,
+}
+
 pub(crate) struct FrameworkRoute {
     pub(crate) framework: String,
     pub(crate) method: String,
