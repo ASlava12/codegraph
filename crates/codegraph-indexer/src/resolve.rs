@@ -3793,6 +3793,20 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         };
         let receiver_type = receiver_type.as_deref();
 
+        // The same holds for the owner a call writes into its own label:
+        // cats writes `StaticMethods.pow(a, k)` inside a `pow` of its own,
+        // and the file answered rather than the object the call names.
+        let the_label_names_another_owner = split_qualified_call(&call.label)
+            .map(|(owner, _)| owner)
+            .is_some_and(|owner| {
+                let owned_by = |target: &NodeId| {
+                    graph_node(&context.graph, *target)
+                        .and_then(|node| node.metadata.get("owner_type"))
+                        .is_some_and(|declared| declared == owner)
+                };
+                !local_targets.iter().any(owned_by) && language_targets.iter().any(owned_by)
+            });
+
         // A receiver whose type is stated names the owner of the method, and
         // that is a stronger fact than the file the call happens to sit in.
         // Without this, `parser := configs.NewParser(fs)` was answered by
@@ -3845,7 +3859,8 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             _ if !local_targets.is_empty()
                 && !names_another_ocaml_module
                 && !written_through_a_chain_of_values
-                && !the_receiver_names_another_owner =>
+                && !the_receiver_names_another_owner
+                && !the_label_names_another_owner =>
             {
                 basis = "same_file";
                 local_targets
