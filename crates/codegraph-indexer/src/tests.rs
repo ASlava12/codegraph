@@ -20604,3 +20604,45 @@ end
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_container_module_the_project_does_not_answer_is_the_languages() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // dune's `stdune/list.ml` is `include ListLabels` and its `string.ml`
+    // is `module String = Stdlib.String`, so neither answers `map` or
+    // `length` -- and 3047 of dune's calls read as a resolver that failed.
+    fs::write(
+        root.join("src").join("list.ml"),
+        "include ListLabels\n\nlet is_empty xs = xs = []\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("work.ml"),
+        "let run xs =\n  let n = String.length \"a\" in\n  let ys = List.map xs ~f:(fun x -> x + n) in\n  List.is_empty ys\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    assert_eq!(resolution_of("List.map"), "builtin");
+    assert_eq!(resolution_of("String.length"), "builtin");
+    // What the project's own module does declare is still its own.
+    assert_eq!(resolution_of("List.is_empty"), "resolved");
+
+    fs::remove_dir_all(root).unwrap();
+}

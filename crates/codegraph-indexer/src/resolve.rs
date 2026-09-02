@@ -1087,7 +1087,29 @@ fn standard_library_module_call(language: &str, label: &str) -> bool {
     match language {
         "ocaml" => matches!(
             module,
-            "Stdlib"
+            // The containers are asked here as well, and only here: this
+            // is reached when the module's own files answered nothing, so
+            // dune's `stdune/list.ml`, which is `include ListLabels`, and
+            // its `string.ml`, which is `module String = Stdlib.String`,
+            // hand the call to the language exactly as the name says. 3049
+            // of dune's 11563 unresolved calls are these.
+            "Array"
+                | "Bool"
+                | "Float"
+                | "Int"
+                | "List"
+                | "Map"
+                | "Option"
+                | "Result"
+                | "Set"
+                | "String"
+                | "Atomic"
+                | "Callback"
+                | "Condition"
+                | "Domain"
+                | "Semaphore"
+                | "Thread"
+                | "Stdlib"
                 | "Printf"
                 | "Format"
                 | "Scanf"
