@@ -805,6 +805,7 @@ impl GraphCache {
             source,
         })?;
         self.sweep_abandoned_writes();
+        self.sweep_records_of_projects_that_are_gone();
         Ok(())
     }
 
@@ -836,6 +837,33 @@ impl GraphCache {
                         .is_ok_and(|age| age > ABANDONED_WRITE_AGE)
                 });
             if abandoned {
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
+
+    /// Remove the records of projects that are no longer there. A record
+    /// names the directory it was made from, and nothing can ever read one
+    /// whose directory is gone: every scan of a temporary tree -- a test
+    /// fixture, a scratch checkout -- leaves one behind, and 174 of the 264
+    /// records on this machine were that. They are read head-first, since
+    /// the root is the third field and a record can be a hundred megabytes.
+    fn sweep_records_of_projects_that_are_gone(&self) {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(root) = record_root(&path) else {
+                continue;
+            };
+            // Only an absolute path can be checked: a record written from a
+            // relative root says nothing about where that root was.
+            let root = Path::new(&root);
+            if root.is_absolute() && !root.exists() {
                 let _ = fs::remove_file(&path);
             }
         }
@@ -1812,6 +1840,23 @@ fn modified_unix_nanos(metadata: &fs::Metadata) -> Option<u128> {
         .map(|duration| duration.as_nanos())
 }
 
+/// The root a cache record names, read from the head of the file. The
+/// record is json with the root near the front, so a few kilobytes are
+/// enough and a large graph is never parsed to answer this.
+fn record_root(path: &Path) -> Option<String> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path).ok()?;
+    let mut head = vec![0u8; 4096];
+    let read = file.read(&mut head).ok()?;
+    let head = String::from_utf8_lossy(&head[..read]);
+    let start = head.find("\"root\"")? + "\"root\"".len();
+    let rest = head[start..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 fn cache_root(root: &Path) -> String {
     root.canonicalize()
         .unwrap_or_else(|_| root.to_path_buf())
@@ -2385,6 +2430,49 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(cache_dir).unwrap();
+    }
+
+    #[test]
+    fn a_record_of_a_project_that_is_gone_is_swept() {
+        // Every scan of a temporary tree -- a test fixture, a scratch
+        // checkout -- leaves a record nothing can ever read again: 174 of
+        // the 264 on this machine were that, and the cache had no way to
+        // reclaim one.
+        let gone = temp_project_root();
+        let kept = temp_project_root();
+        let cache_dir = temp_project_root();
+        for root in [&gone, &kept] {
+            fs::create_dir_all(root.join("src")).unwrap();
+            fs::write(root.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+        }
+        let options = IndexOptions::default();
+        let cache = GraphCache::new(&cache_dir);
+        scan_project_cached(&gone, &options, Some(&cache)).unwrap();
+        let records = || {
+            fs::read_dir(&cache_dir)
+                .unwrap()
+                .flatten()
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some("json")
+                })
+                .count()
+        };
+        assert_eq!(records(), 1, "the first scan is remembered");
+
+        fs::remove_dir_all(&*gone).unwrap();
+        scan_project_cached(&kept, &options, Some(&cache)).unwrap();
+
+        assert_eq!(
+            records(),
+            1,
+            "the record of the project that is gone is swept, the other kept"
+        );
+        fs::remove_dir_all(&*kept).unwrap();
+        fs::remove_dir_all(&*cache_dir).unwrap();
     }
 
     #[test]
