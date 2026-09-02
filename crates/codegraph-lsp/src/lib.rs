@@ -4735,6 +4735,11 @@ pub struct AutoEnrichmentReport {
     /// sampled graph, and it should say so.
     pub requested_work_items: usize,
     pub total_work_items: usize,
+    /// Whether the answers came from the response cache. The difference is
+    /// the difference between a scan of a second and one of two minutes --
+    /// spdlog's hundred questions cost 125 seconds cold and nothing warm --
+    /// so a report that does not say it leaves that unexplained.
+    pub cache: SemanticLspCacheStatus,
     pub skipped_reason: Option<String>,
 }
 
@@ -4743,6 +4748,7 @@ impl AutoEnrichmentReport {
         Self {
             applied: false,
             servers: Vec::new(),
+            cache: SemanticLspCacheStatus::Disabled,
             semantic_edges: 0,
             replaced_edges: 0,
             requested_work_items: 0,
@@ -4900,6 +4906,7 @@ fn run_auto_enrichment(
         replaced_edges: applied.report.replaced_edges,
         requested_work_items,
         total_work_items: batch.total_work_items,
+        cache: run.cache.status,
         skipped_reason: None,
     };
     (enriched, report)

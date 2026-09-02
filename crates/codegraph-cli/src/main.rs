@@ -46,9 +46,9 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    AutoEnrichmentOptions, AutoEnrichmentReport, SemanticLspCache, SemanticLspResponse,
-    SemanticLspRunOptions, SemanticWorkItemFilter, apply_semantic_graph_patch, auto_enrich_graph,
-    discover_lsp_servers, normalize_semantic_request_timeout_ms,
+    AutoEnrichmentOptions, AutoEnrichmentReport, SemanticLspCache, SemanticLspCacheStatus,
+    SemanticLspResponse, SemanticLspRunOptions, SemanticWorkItemFilter, apply_semantic_graph_patch,
+    auto_enrich_graph, discover_lsp_servers, normalize_semantic_request_timeout_ms,
     normalize_semantic_work_item_limit, run_semantic_execution_batch_cached,
     semantic_enrichment_plan_with_filter, semantic_execution_batch,
     semantic_graph_patch_from_responses, semantic_readiness,
@@ -1213,8 +1213,13 @@ fn report_semantic_pass(report: &AutoEnrichmentReport) {
     } else {
         report.servers.join(", ")
     };
+    let cache = match report.cache {
+        SemanticLspCacheStatus::Hit => ", cache hit",
+        SemanticLspCacheStatus::Miss => ", asked the server",
+        SemanticLspCacheStatus::Disabled => "",
+    };
     eprintln!(
-        "semantic: {} edges, {} upgraded, from {} of {} candidates ({servers})",
+        "semantic: {} edges, {} upgraded, from {} of {} candidates ({servers}{cache})",
         report.semantic_edges,
         report.replaced_edges,
         report.requested_work_items,
