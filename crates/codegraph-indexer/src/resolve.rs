@@ -2893,6 +2893,19 @@ pub(crate) fn name_files_by_their_imports(context: &mut IndexContext) {
 /// span covers the inner one.
 pub(crate) fn link_definitions_to_the_ones_that_hold_them(context: &mut IndexContext) {
     let mut links: Vec<(NodeId, NodeId)> = Vec::new();
+    // The definitions that could hold another are looked up by the name the
+    // inner one states, once: reading the node list per nested definition is
+    // a pass over the graph each time, and dune nests them everywhere --
+    // that was two thirds of its scan.
+    let mut functions_by_label: BTreeMap<&str, Vec<&Node>> = BTreeMap::new();
+    for node in &context.graph.nodes {
+        if node.kind == NodeKind::Function {
+            functions_by_label
+                .entry(node.label.as_str())
+                .or_default()
+                .push(node);
+        }
+    }
     for node in &context.graph.nodes {
         if node.kind != NodeKind::Function {
             continue;
@@ -2902,15 +2915,13 @@ pub(crate) fn link_definitions_to_the_ones_that_hold_them(context: &mut IndexCon
         else {
             continue;
         };
-        let holder = context
-            .graph
-            .nodes
+        let holder = functions_by_label
+            .get(holder.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
             .iter()
-            .filter(|candidate| {
-                candidate.kind == NodeKind::Function
-                    && candidate.id != node.id
-                    && &candidate.label == holder
-            })
+            .copied()
+            .filter(|candidate| candidate.id != node.id)
             .filter_map(|candidate| candidate.span.as_ref().map(|outer| (candidate, outer)))
             .filter(|(_, outer)| {
                 outer.path == span.path
