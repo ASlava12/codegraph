@@ -2165,6 +2165,9 @@ pub(crate) fn classify_node(
         },
         Language::Scala => match kind {
             "function_definition" | "function_declaration" => ParsedItemKind::Function,
+            // `val andThen = (f: A => B) => ...` binds a function as much
+            // as a `def` does, and the value it binds is what says so.
+            "val_definition" if scala_binds_a_function(node) => ParsedItemKind::Function,
             // `type NonEmptyMap[K, +A] = NonEmptyMapImpl.Type[K, A]` declares
             // a type as much as a class does, and cats writes 106 of them --
             // 72 of which the graph did not have, so asking what depends on
@@ -3717,6 +3720,14 @@ pub(crate) fn enclosing_type_label(
         current = candidate.parent();
     }
     None
+}
+
+/// Whether a Scala `val` binds a function rather than a value: the value
+/// on the right is a lambda, which states its parameters the way a `def`
+/// states them beside the name.
+fn scala_binds_a_function(node: Node<'_>) -> bool {
+    node.child_by_field_name("value")
+        .is_some_and(|value| value.kind() == "lambda_expression")
 }
 
 /// Whether an OCaml `let_binding` declares parameters (making it a function)

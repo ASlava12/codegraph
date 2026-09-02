@@ -4417,3 +4417,26 @@ let value = 42
     // A value is still a value.
     assert!(!functions.contains(&"value"), "{functions:?}");
 }
+
+#[test]
+fn a_scala_val_that_binds_a_lambda_is_a_function() {
+    let source = br#"
+object M {
+  val isLetter = (c: Char) => c == 'a'
+  val name: String = "x"
+  def plain(x: Int) = x + 1
+}
+"#;
+    let parsed = parse_source("src/M.scala", source, Language::Scala).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+
+    assert!(functions.contains(&"isLetter"), "{functions:?}");
+    assert!(functions.contains(&"plain"), "{functions:?}");
+    // A value that holds no function is still a value.
+    assert!(!functions.contains(&"name"), "{functions:?}");
+}
