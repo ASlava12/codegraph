@@ -1074,6 +1074,10 @@ pub(crate) fn add_error_flow_insights(
         .iter()
         .map(|node| (node.id, node.label.as_str()))
         .collect();
+    // The same question for every edge, and answering it reads every node
+    // and every function the project has: terraform has 255366 edges, and
+    // this was most of the eight seconds its insights took.
+    let reachability_is_reportable = reachability_is_worth_reporting(graph, reachable);
     for (index, edge) in graph.edges.iter().enumerate() {
         if edge.kind != EdgeKind::MayError {
             continue;
@@ -1084,7 +1088,7 @@ pub(crate) fn add_error_flow_insights(
         // places in a bounded list to say one thing. An empty set is the
         // reachability walk saying it found no entrypoint to start from,
         // and then the other rule stays quiet and this one is all there is.
-        if reachability_is_worth_reporting(graph, reachable) && !reachable.contains(&edge.source) {
+        if reachability_is_reportable && !reachable.contains(&edge.source) {
             continue;
         }
         // A suite throws on purpose and a generated file throws whatever
