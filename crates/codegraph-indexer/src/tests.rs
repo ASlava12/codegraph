@@ -20449,3 +20449,49 @@ fn an_ocaml_open_of_a_name_the_file_binds_is_not_another_module() {
         "opening a name the file binds itself does not reach another file"
     );
 }
+
+#[test]
+fn an_ocaml_file_cannot_import_the_one_that_includes_it() {
+    // stdune's `string.ml` includes `String_split`, and `string_split.ml`
+    // opens `String`. The language forbids a cycle between modules, so that
+    // `String` is the standard library's -- but the graph answered with the
+    // file that includes it and reported the pair as a dependency cycle.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("src").join("string.ml"),
+        "include String_split\n\nlet length s = String.length s\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("string_split.ml"),
+        "open String\n\nlet split_on s = String.split_on_char ',' s\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let string_file = graph
+        .nodes
+        .iter()
+        .find(|node| node.kind == NodeKind::File && node.label.ends_with("src/string.ml"))
+        .expect("the including file");
+    let back_edge = graph.edges.iter().any(|edge| {
+        edge.target == string_file.id
+            && edge
+                .metadata
+                .get("relation")
+                .is_some_and(|relation| relation == "local_import_file")
+            && graph.nodes.iter().any(|node| {
+                node.id == edge.source
+                    && node
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.path.ends_with("string_split.ml"))
+            })
+    });
+    assert!(
+        !back_edge,
+        "the file that is included does not import the one that includes it"
+    );
+}

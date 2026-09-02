@@ -5531,6 +5531,60 @@ pub(crate) fn resolve_pending_local_imports(context: &mut IndexContext) {
             );
         }
     }
+
+    // OCaml forbids a cycle between modules, so a file cannot import the
+    // one that includes it: stdune's `string.ml` includes `String_split`,
+    // and `string_split.ml` opens `String` -- the language's own, since it
+    // cannot be the module that includes it. The graph read the pair as a
+    // dependency cycle and reported it as a warning.
+    let mut imported_files: BTreeMap<(String, String), (usize, bool)> = BTreeMap::new();
+    for (index, edge) in context.graph.edges.iter().enumerate() {
+        let relation_is_import = edge
+            .metadata
+            .get("relation")
+            .is_some_and(|relation| relation == "local_import_file");
+        if !relation_is_import {
+            continue;
+        }
+        let (Some(source), Some(target)) = (
+            graph_node(&context.graph, edge.source),
+            graph_node(&context.graph, edge.target),
+        ) else {
+            continue;
+        };
+        if source.metadata.get("language").map(String::as_str) != Some("ocaml") {
+            continue;
+        }
+        let Some(from) = source.span.as_ref().map(|span| span.path.clone()) else {
+            continue;
+        };
+        let includes = source.label.trim_start().starts_with("include ");
+        imported_files.insert((from, target.label.clone()), (index, includes));
+    }
+    let mut drop_edges: BTreeSet<usize> = BTreeSet::new();
+    for ((from, to), (index, includes)) in &imported_files {
+        if *includes {
+            continue;
+        }
+        if imported_files
+            .get(&(to.clone(), from.clone()))
+            .is_some_and(|(_, other_includes)| *other_includes)
+        {
+            drop_edges.insert(*index);
+        }
+    }
+    if !drop_edges.is_empty() {
+        let mut index = 0;
+        context.graph.edges.retain(|_| {
+            let keep = !drop_edges.contains(&index);
+            index += 1;
+            keep
+        });
+        // The context remembers how much of the edge list it has read; a
+        // shorter list makes that a promise it cannot keep.
+        context.edge_keys.clear();
+        context.edge_keys_synced = 0;
+    }
 }
 
 pub(crate) fn resolve_local_import_candidate(
