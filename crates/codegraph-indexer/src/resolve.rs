@@ -4127,6 +4127,25 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 if !inherited.is_empty() {
                     basis = "receiver_type";
                     targets = inherited;
+                } else if type_node_named(&context.graph, owner)
+                    .and_then(|node| node.metadata.get("extends"))
+                    .is_some_and(|bases| {
+                        bases.split(',').map(str::trim).any(|base| {
+                            !base.is_empty()
+                                && type_node_named(
+                                    &context.graph,
+                                    base.rsplit('.').next().unwrap_or(base),
+                                )
+                                .is_none()
+                        })
+                    })
+                {
+                    // A type that embeds one the project does not declare
+                    // reaches that one's methods through it: terraform
+                    // embeds `sync.Mutex` and writes `p.Lock()`, which is
+                    // the mutex's and not the 232 `Lock` methods it has.
+                    add_external_call_placeholder(context, call, "external");
+                    continue;
                 }
             }
         }

@@ -20267,3 +20267,47 @@ fn an_ocaml_constructor_is_a_declaration_a_call_can_reach() {
         "the function the file declares is still called: {call_labels:?}"
     );
 }
+
+#[test]
+fn a_type_that_embeds_a_foreign_one_reaches_its_methods() {
+    // `type Provider struct { sync.Mutex }` gives `p.Lock()` the mutex's
+    // method, and the project declares no `Lock` on `Provider` -- so the
+    // call left the type and was answered by whichever `Lock` shared the
+    // name. terraform writes 232 of them.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("states")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("states").join("sync.go"),
+        "package states\n\ntype SyncState struct{}\n\nfunc (s *SyncState) Lock() {\n}\n\ntype OtherState struct{}\n\nfunc (o *OtherState) Lock() {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal").join("states").join("provider.go"),
+        "package states\n\nimport (\n\t\"sync\"\n)\n\ntype Provider struct {\n\tsync.Mutex\n}\n\nfunc (p *Provider) Configure() {\n\tp.Lock()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let own = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Lock"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("SyncState")
+        })
+        .expect("the project's own Lock");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == own.id),
+        "a method reached through an embedded foreign type is not the project's"
+    );
+    let leaves = graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::ExternalDependency
+            && node.label == "p.Lock"
+            && node.metadata.get("resolution").map(String::as_str) == Some("external")
+    });
+    assert!(leaves, "the call is recorded as leaving the project");
+}
