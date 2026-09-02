@@ -3723,8 +3723,16 @@ pub(crate) fn enclosing_type_label(
 /// rather than binding a value.
 pub(crate) fn ocaml_binding_has_parameter(node: Node<'_>) -> bool {
     let mut cursor = node.walk();
-    node.named_children(&mut cursor)
-        .any(|child| child.kind() == "parameter")
+    node.named_children(&mut cursor).any(|child| {
+        // `let f x = ..` states the parameter outright; `let f = function
+        // | [] -> ..` and `let f = fun x -> ..` state it in the value they
+        // bind, and dune writes 619 of those -- none of which reached the
+        // graph at all.
+        matches!(
+            child.kind(),
+            "parameter" | "function_expression" | "fun_expression"
+        )
+    })
 }
 
 pub(crate) fn classify_call(

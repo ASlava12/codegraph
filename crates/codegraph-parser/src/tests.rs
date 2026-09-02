@@ -4385,3 +4385,35 @@ type executionContext struct {
 
     assert_eq!(embedded.as_deref(), Some("ExecutionContextState"));
 }
+
+#[test]
+fn a_binding_that_holds_a_function_is_a_function() {
+    // dune writes 619 of these and none of them reached the graph: the
+    // rule asked for a parameter beside the name, and `function` and `fun`
+    // state theirs in the value they bind.
+    let source = br#"
+let is_empty = function
+  | [] -> true
+  | _ -> false
+;;
+
+let add = fun x y -> x + y
+
+let plain x = x + 1
+
+let value = 42
+"#;
+    let parsed = parse_source("src/list.ml", source, Language::OCaml).unwrap();
+    let functions: Vec<_> = parsed
+        .items
+        .iter()
+        .filter(|item| item.kind == ParsedItemKind::Function)
+        .map(|item| item.label.as_str())
+        .collect();
+
+    assert!(functions.contains(&"is_empty"), "{functions:?}");
+    assert!(functions.contains(&"add"), "{functions:?}");
+    assert!(functions.contains(&"plain"), "{functions:?}");
+    // A value is still a value.
+    assert!(!functions.contains(&"value"), "{functions:?}");
+}
