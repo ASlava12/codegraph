@@ -782,7 +782,7 @@ pub(crate) fn add_duplicate_compose_published_port_insights(
         }
         let services = nodes
             .iter()
-            .filter_map(|node_id| graph.nodes.iter().find(|node| node.id == *node_id))
+            .filter_map(|node_id| node_with_id(graph, *node_id))
             .filter_map(|node| node.metadata.get("service").cloned())
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -5196,7 +5196,7 @@ fn test_scaffolding_paths(graph: &CodeGraph) -> BTreeSet<String> {
         if edge.kind != EdgeKind::Imports {
             continue;
         }
-        let Some(import) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+        let Some(import) = node_with_id(graph, edge.target) else {
             continue;
         };
         if import.metadata.get("language").map(String::as_str) != Some("go") {
@@ -5211,7 +5211,7 @@ fn test_scaffolding_paths(graph: &CodeGraph) -> BTreeSet<String> {
         if !matches!(target, "testing" | "testing/quick" | "net/http/httptest") {
             continue;
         }
-        if let Some(source) = graph.nodes.iter().find(|node| node.id == edge.source)
+        if let Some(source) = node_with_id(graph, edge.source)
             && source.kind == NodeKind::File
         {
             paths.insert(source.label.clone());
@@ -5311,7 +5311,7 @@ pub(crate) fn add_duplicate_framework_route_insights(
 
         let handlers = nodes
             .iter()
-            .filter_map(|id| graph.nodes.iter().find(|node| node.id == *id))
+            .filter_map(|id| node_with_id(graph, *id))
             .filter_map(|node| node.metadata.get("handler").map(String::as_str))
             .collect::<BTreeSet<_>>();
         let handler_text = if handlers.is_empty() {
@@ -5334,7 +5334,7 @@ pub(crate) fn add_duplicate_framework_route_insights(
         let files = format_backtick_list(
             nodes
                 .iter()
-                .filter_map(|id| graph.nodes.iter().find(|node| node.id == *id))
+                .filter_map(|id| node_with_id(graph, *id))
                 .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
                 .collect::<BTreeSet<_>>()
                 .into_iter(),
@@ -5704,7 +5704,7 @@ pub(crate) fn add_dependency_cycle_insights(graph: &CodeGraph, insights: &mut Ve
         // warning.
         let placed: Vec<&str> = component
             .iter()
-            .filter_map(|id| graph.nodes.iter().find(|node| node.id == *id))
+            .filter_map(|id| node_with_id(graph, *id))
             .filter_map(|node| node.span.as_ref().map(|span| span.path.as_str()))
             .collect();
         let files: BTreeSet<&str> = placed.iter().copied().collect();

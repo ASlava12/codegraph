@@ -90,7 +90,7 @@ pub(crate) fn journey_with_insights(
                 let Some(edge) = graph.edges.get(*edge_index) else {
                     continue;
                 };
-                let Some(node) = graph.nodes.iter().find(|node| node.id == edge.target) else {
+                let Some(node) = node_with_id(graph, edge.target) else {
                     continue;
                 };
                 confidence_score += journey_confidence_weight(edge.confidence);
