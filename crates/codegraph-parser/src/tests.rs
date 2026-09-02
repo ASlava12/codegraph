@@ -4479,3 +4479,40 @@ int hdr_init(int64_t lowest, int64_t highest) { return 0; }
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn reads_a_class_whose_members_a_macro_states() {
+    // nlohmann/json writes this in every example and in its own tests: the
+    // macro states members the grammar cannot see, and what follows was
+    // read as an error.
+    let source = br#"
+namespace ns {
+
+class person
+{
+  public:
+    std::string name;
+    int age;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(person, name, age)
+
+    int years() const { return age; }
+};
+
+} // namespace ns
+"#;
+    let parsed = parse_source("docs/examples/person.cpp", source, Language::Cpp).unwrap();
+    let labels: Vec<_> = parsed
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
+
+    assert!(labels.contains(&"person"), "{labels:?}");
+    assert!(labels.contains(&"years"), "{labels:?}");
+    // The macro is not a definition of its own.
+    assert!(
+        !labels.contains(&"NLOHMANN_DEFINE_TYPE_INTRUSIVE"),
+        "{labels:?}"
+    );
+}

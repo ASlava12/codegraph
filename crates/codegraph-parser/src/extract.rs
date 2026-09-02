@@ -264,7 +264,17 @@ fn readings_for_a_second_look(language: Language, source: &str) -> Vec<String> {
                 .as_deref()
                 .and_then(mask_attribute_macros)
                 .or_else(|| guards.clone());
-            [macros, guards, both].into_iter().flatten().collect()
+            // A macro standing in for members belongs to a class body,
+            // which C does not have: blanking such a line in redis's
+            // dependencies changed what its headers declare, while
+            // nlohmann/json needs exactly this.
+            let invocations = (language == Language::Cpp)
+                .then(|| mask_macro_invocation_lines(source))
+                .flatten();
+            [macros, guards, both, invocations]
+                .into_iter()
+                .flatten()
+                .collect()
         }
         Language::CSharp | Language::Swift => {
             mask_conditional_compilation(source).into_iter().collect()
@@ -312,6 +322,43 @@ fn mask_conditional_compilation(source: &str) -> Option<String> {
         }
     }
     Some(masked)
+}
+
+/// A macro written on a line of its own inside a class body:
+/// `NLOHMANN_DEFINE_TYPE_INTRUSIVE(person, name, address, age)` states
+/// members the grammar cannot see, and what follows it is read as an
+/// error. Only a line that is nothing but such a call is blanked, so a
+/// declaration that merely uses a macro keeps every name it states.
+fn mask_macro_invocation_lines(source: &str) -> Option<String> {
+    let is_a_macro_call = |line: &str| {
+        let trimmed = line.trim().trim_end_matches(';').trim_end();
+        let Some((name, rest)) = trimmed.split_once('(') else {
+            return false;
+        };
+        !name.is_empty()
+            && name.chars().all(|character| {
+                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+            })
+            && name.chars().any(|character| character.is_ascii_uppercase())
+            && rest.ends_with(')')
+    };
+    let mut masked = String::with_capacity(source.len());
+    let mut blanked = false;
+    for line in source.split_inclusive('\n') {
+        if is_a_macro_call(line.trim_end_matches(['\n', '\r'])) {
+            for character in line.chars() {
+                masked.push(if character == '\n' || character == '\r' {
+                    character
+                } else {
+                    ' '
+                });
+            }
+            blanked = true;
+        } else {
+            masked.push_str(line);
+        }
+    }
+    blanked.then_some(masked)
 }
 
 /// A C header opens `extern "C" {` under `#ifdef __cplusplus` and closes
