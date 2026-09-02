@@ -17314,3 +17314,68 @@ fn a_config_trace_shows_the_programs_own_readers_first() {
         "the program's own reader first, then its test, then what runs it"
     );
 }
+
+#[test]
+fn a_value_each_file_binds_is_not_a_duplicate_label() {
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    let bound = |visibility: Option<&str>| {
+        let mut metadata = BTreeMap::from([("definition_form".to_string(), "value".to_string())]);
+        if let Some(visibility) = visibility {
+            metadata.insert("visibility".to_string(), visibility.to_string());
+        }
+        metadata
+    };
+    // koel writes `const AboutKoelModal = defineAsyncComponent(..)` in the
+    // two components that open it: each binding is its own file's.
+    let one = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "AboutKoelModal",
+        Some(span("src/AboutKoelButton.vue")),
+        bound(None),
+    );
+    let two = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "AboutKoelModal",
+        Some(span("src/ProfileDropdown.vue")),
+        bound(None),
+    );
+    // A value the file hands out can be reached from elsewhere, so which
+    // one a name means is still a question.
+    let exported_one = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "createStore",
+        Some(span("src/store/one.ts")),
+        bound(Some("public")),
+    );
+    let exported_two = graph.add_node_with_metadata(
+        NodeKind::Function,
+        "createStore",
+        Some(span("src/store/two.ts")),
+        bound(Some("public")),
+    );
+
+    let report = insights(&graph);
+
+    assert!(
+        !report.insights.iter().any(|insight| {
+            insight.kind == "duplicate_function_label"
+                && (insight.nodes.contains(&one) || insight.nodes.contains(&two))
+        }),
+        "a value each file binds for itself is not a name two declarations answer to"
+    );
+    assert!(
+        report.insights.iter().any(|insight| {
+            insight.kind == "duplicate_function_label"
+                && insight.nodes.contains(&exported_one)
+                && insight.nodes.contains(&exported_two)
+        }),
+        "a value a file hands out is still reachable by name"
+    );
+}

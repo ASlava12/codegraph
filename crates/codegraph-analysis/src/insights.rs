@@ -710,6 +710,18 @@ pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut 
             }) {
                 continue;
             }
+            // A value bound in a file is that file's own, whatever another
+            // file binds under the same name: koel writes `const
+            // AboutKoelModal = defineAsyncComponent(..)` in the two
+            // components that open it, and `404: () => triggerNotFound()`
+            // in the two screens that handle it. Neither is a name two
+            // declarations answer to.
+            if shared.iter().all(|node| {
+                node.metadata.get("definition_form").map(String::as_str) == Some("value")
+                    && node.metadata.get("visibility").map(String::as_str) != Some("public")
+            }) {
+                continue;
+            }
             // An overload set is one declaration site: java's `toJson(Object)`
             // beside `toJson(Object, Type)` is not two answers to a name.
             let files: BTreeSet<&str> = shared

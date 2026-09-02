@@ -688,6 +688,18 @@ function buildClientInsights(graph) {
       // A macro is written once per preprocessor branch and C has no owner
       // to tell the branches apart. The CLI skips those too.
       if (shared.every((node) => node.metadata?.definition_form === "macro")) return;
+      // A value bound in a file is that file's own, whatever another file
+      // binds under the same name: koel writes `const AboutKoelModal =
+      // defineAsyncComponent(..)` in the two components that open it. The
+      // CLI skips these too.
+      if (
+        shared.every(
+          (node) =>
+            node.metadata?.definition_form === "value" &&
+            node.metadata?.visibility !== "public",
+        )
+      )
+        return;
       const files = new Set(
         shared.map((node) => node.span?.path).filter((path) => typeof path === "string"),
       );
