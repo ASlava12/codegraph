@@ -3157,6 +3157,24 @@ fn ocaml_included_modules(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// `EIP712._hashTypedDataV4` through its *second* base. Recording only the
 /// first found 312 of openzeppelin's 911 inherited calls; recording all of
 /// them finds 409.
+/// Whether an OCaml application applies a constructor or a functor rather
+/// than a function: both are written with an uppercase name, and a
+/// polymorphic variant with a backtick.
+fn ocaml_constructor_application(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(callee) = node.child_by_field_name("function") else {
+        return false;
+    };
+    let Some(text) = node_text(callee, source) else {
+        return false;
+    };
+    let last = text.trim().rsplit('.').next().unwrap_or_default().trim();
+    last.starts_with('`')
+        || last
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_uppercase())
+}
+
 /// The types a Go declaration embeds, which is how it says a method is also
 /// its own: `type Local struct { *Backend }` answers `Backend`'s methods,
 /// and an interface embeds the same way. An embedded field is written as a
@@ -5597,7 +5615,13 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                     .child_by_field_name("function")
                     .is_some_and(|callee| callee.kind() == "apply")
         }
-        Language::OCaml => node.kind() == "application_expression",
+        // `Some x`, `Ok v`, `Atom s` and `` `P n `` apply a constructor, and
+        // `Make (X)` applies a functor: an uppercase head in OCaml is never
+        // a function, so none of them is a call. dune writes 6428 of them,
+        // 4314 of which the graph reported as calls it could not place.
+        Language::OCaml => {
+            node.kind() == "application_expression" && !ocaml_constructor_application(node, source)
+        }
         Language::Julia => {
             node.kind() == "call_expression" && !julia_is_short_definition_head(node)
         }

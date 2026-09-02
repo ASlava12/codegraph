@@ -20212,3 +20212,39 @@ fn a_binding_from_a_foreign_package_leaves_the_project() {
     });
     assert!(leaves, "the call is recorded as leaving the project");
 }
+
+#[test]
+fn an_ocaml_constructor_is_not_a_call() {
+    // `Some x`, `Ok v` and `` `P n `` apply a constructor and `Make (X)` a
+    // functor; an uppercase head in OCaml is never a function. dune recorded
+    // 6428 of them as calls, 4314 of which it then reported as calls it
+    // could not place.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
+    fs::write(
+        root.join("src").join("conv.ml"),
+        "type sexp = Atom of string\n\nlet quote s = String.trim s\n\nlet encode s =\n  let value = Atom (quote s) in\n  let tagged = `Payload value in\n  (value, tagged)\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let call_labels: Vec<&str> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Calls)
+        .filter_map(|edge| edge.metadata.get("call_label").map(String::as_str))
+        .collect();
+    assert!(
+        !call_labels.contains(&"Atom"),
+        "a constructor application is not a call: {call_labels:?}"
+    );
+    assert!(
+        !call_labels.iter().any(|label| label.starts_with('`')),
+        "a polymorphic variant is not a call: {call_labels:?}"
+    );
+    assert!(
+        call_labels.contains(&"quote"),
+        "the function the file declares is still called: {call_labels:?}"
+    );
+}
