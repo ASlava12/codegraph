@@ -5667,8 +5667,7 @@ pub(crate) fn link_imports_to_package_hubs(context: &mut IndexContext) {
                 // hundred modules, and the prefix can be checked without
                 // building anything.
                 let under_module = path.strip_prefix(module);
-                if (path == *module
-                    || under_module.is_some_and(|rest| rest.starts_with('/')))
+                if (path == *module || under_module.is_some_and(|rest| rest.starts_with('/')))
                     && best.is_none_or(|(current, _)| module.len() > current.len())
                 {
                     best = Some((module, *hub));

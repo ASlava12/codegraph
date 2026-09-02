@@ -20311,3 +20311,39 @@ fn a_type_that_embeds_a_foreign_one_reaches_its_methods() {
     });
     assert!(leaves, "the call is recorded as leaving the project");
 }
+
+#[test]
+fn a_pattern_named_inside_a_string_is_not_a_call() {
+    // A detector's own source is source too: `if lower.contains("dotenv(")`
+    // names the pattern rather than calling it, and this repository read
+    // itself as loading a `.env` file for exactly that line.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
+    fs::write(
+        root.join("src").join("detector.rs"),
+        "pub fn detect(line: &str) -> bool {\n    let lower = line.to_ascii_lowercase();\n    lower.contains(\"dotenv\") && lower.contains(\"dotenv(\")\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("main.rs"),
+        "fn main() {\n    dotenv::dotenv().ok();\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let reads = |path: &str| {
+        graph.nodes.iter().any(|node| {
+            node.kind == NodeKind::Config
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with(path))
+        })
+    };
+    assert!(reads("main.rs"), "the call is still read as one");
+    assert!(
+        !reads("detector.rs"),
+        "a pattern named inside a string is not a call"
+    );
+}

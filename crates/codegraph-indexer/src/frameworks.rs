@@ -77,7 +77,7 @@ pub(crate) fn python_framework_configs(source: &str) -> Vec<FrameworkConfig> {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if lower.contains(".config.from_pyfile(")
+        if calls_rather_than_names(&lower, ".config.from_pyfile(")
             && let Some(value) = first_quoted_value(trimmed)
         {
             configs.push(framework_config(
@@ -89,7 +89,7 @@ pub(crate) fn python_framework_configs(source: &str) -> Vec<FrameworkConfig> {
             ));
         }
 
-        if lower.contains(".config.from_object(")
+        if calls_rather_than_names(&lower, ".config.from_object(")
             && let Some(value) = first_quoted_value(trimmed)
         {
             configs.push(framework_config(
@@ -101,7 +101,7 @@ pub(crate) fn python_framework_configs(source: &str) -> Vec<FrameworkConfig> {
             ));
         }
 
-        if lower.contains("settingsconfigdict(")
+        if calls_rather_than_names(&lower, "settingsconfigdict(")
             && lower.contains("env_file")
             && let Some(value) = first_quoted_value(trimmed)
         {
@@ -133,6 +133,45 @@ pub(crate) fn python_framework_configs(source: &str) -> Vec<FrameworkConfig> {
     configs
 }
 
+/// Whether a line calls something rather than merely naming it. A
+/// detector's own source is source too: `if calls_rather_than_names(&lower, "dotenv(")`
+/// names the pattern inside a string, and this repository reported itself
+/// as reading a `.env` file for that reason. A needle that appears only
+/// between quotes is a mention.
+pub(crate) fn calls_rather_than_names(line: &str, needle: &str) -> bool {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let bytes: Vec<char> = line.chars().collect();
+    let needle: Vec<char> = needle.chars().collect();
+    let mut index = 0;
+    while index < bytes.len() {
+        let character = bytes[index];
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        match quote {
+            Some(open) => {
+                if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => {
+                if character == '"' || character == '\'' || character == '`' {
+                    quote = Some(character);
+                } else if bytes[index..].starts_with(needle.as_slice()) {
+                    return true;
+                }
+            }
+        }
+        index += 1;
+    }
+    false
+}
+
 pub(crate) fn js_framework_configs(source: &str) -> Vec<FrameworkConfig> {
     let mut configs = Vec::new();
     for (index, line) in source.lines().enumerate() {
@@ -140,7 +179,7 @@ pub(crate) fn js_framework_configs(source: &str) -> Vec<FrameworkConfig> {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if lower.contains("dotenv.config(") {
+        if calls_rather_than_names(&lower, "dotenv.config(") {
             let value = first_quoted_value(trimmed).unwrap_or_else(|| ".env".to_string());
             configs.push(framework_config(
                 "dotenv",
@@ -171,7 +210,7 @@ pub(crate) fn rust_framework_configs(source: &str) -> Vec<FrameworkConfig> {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if lower.contains("dotenv") && lower.contains("dotenv(") {
+        if lower.contains("dotenv") && calls_rather_than_names(&lower, "dotenv(") {
             configs.push(framework_config(
                 "dotenv",
                 "dotenv config:.env".to_string(),
@@ -181,7 +220,7 @@ pub(crate) fn rust_framework_configs(source: &str) -> Vec<FrameworkConfig> {
             ));
         }
 
-        if lower.contains("environment::with_prefix(")
+        if calls_rather_than_names(&lower, "environment::with_prefix(")
             && let Some(value) = first_quoted_value_after(trimmed, "Environment::with_prefix(")
         {
             configs.push(framework_config(
@@ -203,7 +242,7 @@ pub(crate) fn go_framework_configs(source: &str) -> Vec<FrameworkConfig> {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if lower.contains("viper.setconfigname(")
+        if calls_rather_than_names(&lower, "viper.setconfigname(")
             && let Some(value) = first_quoted_value_after(trimmed, "SetConfigName(")
         {
             configs.push(framework_config(
@@ -215,7 +254,7 @@ pub(crate) fn go_framework_configs(source: &str) -> Vec<FrameworkConfig> {
             ));
         }
 
-        if lower.contains("viper.addconfigpath(")
+        if calls_rather_than_names(&lower, "viper.addconfigpath(")
             && let Some(value) = first_quoted_value_after(trimmed, "AddConfigPath(")
         {
             configs.push(framework_config(
@@ -227,7 +266,7 @@ pub(crate) fn go_framework_configs(source: &str) -> Vec<FrameworkConfig> {
             ));
         }
 
-        if lower.contains("godotenv.load(") {
+        if calls_rather_than_names(&lower, "godotenv.load(") {
             let value =
                 first_quoted_value_after(trimmed, "Load(").unwrap_or_else(|| ".env".to_string());
             configs.push(framework_config(
@@ -249,7 +288,7 @@ pub(crate) fn php_framework_configs(source: &str) -> Vec<FrameworkConfig> {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        if lower.contains("config(")
+        if calls_rather_than_names(&lower, "config(")
             && let Some(value) = first_quoted_value_after(trimmed, "config(")
         {
             configs.push(framework_config(
@@ -261,7 +300,7 @@ pub(crate) fn php_framework_configs(source: &str) -> Vec<FrameworkConfig> {
             ));
         }
 
-        if lower.contains("->configure(")
+        if calls_rather_than_names(&lower, "->configure(")
             && let Some(value) = first_quoted_value_after(trimmed, "->configure(")
         {
             configs.push(framework_config(
@@ -542,7 +581,7 @@ pub(crate) fn route_from_python_decorator(
     framework: &str,
 ) -> Option<FrameworkRoute> {
     let lower = line.to_ascii_lowercase();
-    if !(lower.contains(".route(")
+    if !(calls_rather_than_names(&lower, ".route(")
         || route_methods()
             .iter()
             .any(|method| lower.contains(&format!(".{}(", method.to_ascii_lowercase()))))
