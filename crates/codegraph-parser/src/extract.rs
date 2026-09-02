@@ -4517,7 +4517,7 @@ fn csharp_constructed_type(declarator: Node<'_>, source: &[u8]) -> Option<String
 /// the repository may well declare.
 fn csharp_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
     match node.kind() {
-        "identifier" => node_text(node, source),
+        "identifier" | "predefined_type" => node_text(node, source),
         "generic_name" => node
             .child_by_field_name("name")
             .and_then(|name| csharp_type_name(name, source))

@@ -4250,3 +4250,34 @@ final class Protected<Value> {
     assert!(labels.contains(&"Protected"), "{labels:?}");
     assert!(labels.contains(&"read"), "{labels:?}");
 }
+
+#[test]
+fn states_the_type_of_a_receiver_the_language_declares() {
+    // `string`, `double` and `object` are types no repository declares,
+    // and that is what places the call: `s.StartsWith(..)` is the
+    // language's, not a `StartsWith` the project happens to write.
+    let source = br#"
+public class JValue
+{
+    private static int CompareFloat(double d1, string s, object value)
+    {
+        int result = d1.CompareTo(d1);
+        bool starts = s.StartsWith("a");
+        System.Type held = value.GetType();
+        return result;
+    }
+}
+"#;
+    let parsed = parse_source("Src/JValue.cs", source, Language::CSharp).unwrap();
+    let stated = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .and_then(|item| item.metadata.get("receiver_type").cloned())
+    };
+
+    assert_eq!(stated("d1.CompareTo").as_deref(), Some("double"));
+    assert_eq!(stated("s.StartsWith").as_deref(), Some("string"));
+    assert_eq!(stated("value.GetType").as_deref(), Some("object"));
+}
