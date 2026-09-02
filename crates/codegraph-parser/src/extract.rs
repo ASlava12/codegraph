@@ -3810,6 +3810,17 @@ pub(crate) fn classify_call(
             // call, which means `self`.
             None => {
                 metadata.insert("receiver_form".to_string(), "value".to_string());
+                // What the value came from, when the source made it by
+                // calling a name: `expect(account).to` is written on what
+                // `expect` handed back, and that says whose `to` it is.
+                if let Some(handed_back) = node
+                    .child_by_field_name("receiver")
+                    .filter(|receiver| receiver.kind() == "call")
+                    .and_then(|receiver| receiver.child_by_field_name("method"))
+                    .and_then(|method| node_text(method, source))
+                {
+                    metadata.insert("receiver_call".to_string(), handed_back);
+                }
             }
         }
     }
@@ -3906,6 +3917,24 @@ pub(crate) fn classify_call(
             && head.trim_end().ends_with(['.', '>'])
         {
             metadata.insert("receiver_form".to_string(), "value".to_string());
+            // What the value came from, when the source made it by calling
+            // a name: `expect(account).to` is written on what `expect`
+            // handed back, and that says whose `to` it is.
+            if let Some(handed_back) = head
+                .trim_end()
+                .trim_end_matches(['.', '>', '-'])
+                .strip_suffix(')')
+                .and_then(|call| call.split_once('('))
+                .map(|(head, _)| head.trim())
+                .filter(|head| {
+                    !head.is_empty()
+                        && head.chars().all(|character| {
+                            character.is_alphanumeric() || character == '_' || character == '!'
+                        })
+                })
+            {
+                metadata.insert("receiver_call".to_string(), handed_back.to_string());
+            }
         }
     }
     /// The names a nix file takes from whoever imports it.

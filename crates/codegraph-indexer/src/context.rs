@@ -215,6 +215,9 @@ pub(crate) struct PendingCall {
     /// name (`accounts.each`), rather than bare (`each`, which means
     /// `self`) or through a constant (`Rails.application`).
     pub(crate) receiver_is_a_value: bool,
+    /// The name that handed back the value the call is written on, where
+    /// the source made it by calling one: `expect(account).to`.
+    pub(crate) receiver_call: Option<String>,
 }
 
 /// An environment read whose key is a name rather than a literal,

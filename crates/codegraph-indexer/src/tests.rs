@@ -20531,7 +20531,7 @@ fn a_word_the_spec_runner_provides_is_not_the_projects_own() {
     // the word RSpec writes the spec in.
     fs::write(
         root.join("app").join("models").join("export.rb"),
-        "class Export\n  def context\n    @context\n  end\nend\n",
+        "class Export\n  def context\n    @context\n  end\n\n  def reaches_a_mapping\n    mapping.to\n  end\nend\n",
     )
     .unwrap();
     fs::write(
@@ -20549,7 +20549,7 @@ end
 RSpec.describe Export do
   context 'when exporting' do
     it 'names the account' do
-      Export.new.context
+      expect(Export.new.context).to eq(1)
     end
   end
 end
@@ -20587,6 +20587,20 @@ end
     // the spec means: koel writes `assertMatchesAgainstRules` 21 times and
     // declares it under `tests/`.
     assert_eq!(resolutions_of("change"), vec!["resolved".to_string()]);
+    // `expect(..).to` is written on what the runner handed back, so it is
+    // the runner's too -- 1053 of mastodon's `to` calls. A `to` reached
+    // through anything else is not: devise's `mapping.to` is an attribute,
+    // and mastodon writes 27 of those outside its suite.
+    assert!(
+        resolutions_of("to").contains(&"builtin".to_string()),
+        "got {:?}",
+        resolutions_of("to")
+    );
+    assert!(
+        !resolutions_of("to").iter().all(|r| r == "builtin"),
+        "a `to` reached through anything else is not the runner's: {:?}",
+        resolutions_of("to")
+    );
 
     fs::remove_dir_all(root).unwrap();
 }

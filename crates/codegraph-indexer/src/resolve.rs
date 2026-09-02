@@ -3437,11 +3437,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // names the class that declares it, and koel throws it from three of
         // its own fakes, while `$instance->assert()` reaches a method of the
         // object in front of it -- one of koel's own preferences.
+        let written_on_what_the_runner_handed_back =
+            call.receiver_call.as_deref().is_some_and(|handed_back| {
+                test_runner_provides_call(&call.language, &call.span.path, handed_back)
+            });
         if !call.label.contains('.')
             && !call.label.contains("::")
-            && !call.receiver_is_a_value
-            && call.receiver.is_none()
-            && call.receiver_type.is_none()
+            && (written_on_what_the_runner_handed_back
+                || (!call.receiver_is_a_value
+                    && call.receiver.is_none()
+                    && call.receiver_type.is_none()))
             && test_runner_provides_call(&call.language, &call.span.path, &call.label)
         {
             // A suite does declare helpers of its own, and one of those is
