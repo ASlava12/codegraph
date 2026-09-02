@@ -897,7 +897,8 @@ pub(crate) fn index_file(
             .map(|parsed| parsed.string_line_ranges.as_slice())
             .unwrap_or_default();
         index_rationale_comments(context, file_id, label, language, source, string_lines);
-        script_entrypoint = index_script_entrypoint(context, file_id, label, source);
+        script_entrypoint = index_script_entrypoint(context, file_id, label, source)
+            .or_else(|| index_boot_entrypoint(context, file_id, label));
         index_manifest_facts(context, file_id, path, label, source, language);
         index_markdown_document(context, file_id, path, label, source);
         index_rst_document(context, file_id, path, label, source);

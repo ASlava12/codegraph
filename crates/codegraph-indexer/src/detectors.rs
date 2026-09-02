@@ -282,6 +282,87 @@ pub(crate) fn index_script_entrypoint(
     Some(entrypoint_id)
 }
 
+/// What a framework loads at boot, by the path it insists on. Rails
+/// requires every file under `config/initializers`, django imports the
+/// settings module, and laravel loads `config/*.php`: nothing in the
+/// repository calls them, and 48 of the corpus's configuration reads sat
+/// in them and read as code no entrypoint reaches.
+fn framework_boot_file(label: &str) -> Option<&'static str> {
+    let file = label.rsplit('/').next().unwrap_or(label);
+    if label.contains("config/initializers/") && label.ends_with(".rb") {
+        return Some("rails initializer");
+    }
+    if label.contains("config/environments/") && label.ends_with(".rb") {
+        return Some("rails environment");
+    }
+    if label.starts_with("config/")
+        && matches!(file, "application.rb" | "environment.rb" | "boot.rb")
+    {
+        return Some("rails boot");
+    }
+    if matches!(file, "settings.py" | "wsgi.py" | "asgi.py") {
+        return Some("django boot");
+    }
+    if label.starts_with("config/") && label.ends_with(".php") {
+        return Some("laravel config");
+    }
+    if label == "bootstrap/app.php" {
+        return Some("laravel boot");
+    }
+    None
+}
+
+pub(crate) fn index_boot_entrypoint(
+    context: &mut IndexContext,
+    file_id: NodeId,
+    label: &str,
+) -> Option<NodeId> {
+    let framework = framework_boot_file(label)?;
+    let mut metadata = BTreeMap::new();
+    metadata.insert("item_kind".to_string(), "boot_entrypoint".to_string());
+    metadata.insert("entrypoint_kind".to_string(), "boot".to_string());
+    metadata.insert("source".to_string(), "framework".to_string());
+    metadata.insert("framework".to_string(), framework.to_string());
+    metadata.insert("target".to_string(), label.to_string());
+    let entrypoint_id = context.graph.add_node_with_metadata(
+        NodeKind::Entrypoint,
+        format!("{framework}:{label}"),
+        Some(SourceSpan {
+            path: label.to_string(),
+            start_line: 1,
+            start_column: 0,
+            end_line: 1,
+            end_column: 0,
+        }),
+        metadata,
+    );
+    add_edge_once(
+        context,
+        file_id,
+        entrypoint_id,
+        EdgeKind::Contains,
+        Confidence::Syntactic,
+    );
+    let root_id = context.graph.root;
+    add_edge_once(
+        context,
+        root_id,
+        entrypoint_id,
+        EdgeKind::Entrypoint,
+        Confidence::Syntactic,
+    );
+    add_entrypoint_reference(
+        context,
+        entrypoint_id,
+        file_id,
+        "entrypoint_file",
+        "framework_boot_path",
+        Confidence::Syntactic,
+        None,
+    );
+    Some(entrypoint_id)
+}
+
 pub(crate) fn index_framework_routes(
     context: &mut IndexContext,
     file_id: NodeId,

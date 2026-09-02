@@ -20730,3 +20730,47 @@ class CheckLicenseStatusCommand extends Command
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_file_the_framework_loads_at_boot_is_an_entrypoint() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("config").join("initializers")).unwrap();
+    // Rails requires every file under `config/initializers` at boot, and
+    // 206 of mastodon's configuration reads sat in files like this one.
+    fs::write(
+        root.join("config").join("initializers").join("redis.rb"),
+        "Rails.application.config.redis_url = ENV.fetch('REDIS_URL', 'redis://localhost')\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("config").join("application.rb"),
+        "module Mastodon\n  class Application\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let boots: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.kind == NodeKind::Entrypoint
+                && node.metadata.get("entrypoint_kind").map(String::as_str) == Some("boot")
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+
+    assert!(
+        boots
+            .iter()
+            .any(|label| label.contains("config/initializers/redis.rb")),
+        "{boots:?}"
+    );
+    assert!(
+        boots
+            .iter()
+            .any(|label| label.contains("config/application.rb")),
+        "{boots:?}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
