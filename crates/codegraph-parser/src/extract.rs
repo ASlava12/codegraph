@@ -4022,10 +4022,36 @@ fn java_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String,
 /// `val`s that state one. A name bound twice to different types is left out
 /// rather than guessed at.
 fn scala_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    // A local of the same name as a class parameter is what the line in
+    // front means, so the definition's own bindings are read after the
+    // class's and win rather than colliding with them.
+    let mut declared = scala_bindings_in(
+        enclosing_class_members(
+            node,
+            &[
+                "class_definition",
+                "object_definition",
+                "trait_definition",
+                "enum_definition",
+            ],
+            &[
+                "class_parameter",
+                "parameter",
+                "val_definition",
+                "val_declaration",
+            ],
+        ),
+        source,
+    );
+    declared.extend(scala_bindings_in(vec![node], source));
+    declared
+}
+
+/// What one set of declarations binds, read the way scala states types.
+fn scala_bindings_in(mut stack: Vec<Node<'_>>, source: &[u8]) -> BTreeMap<String, String> {
     let mut declared: BTreeMap<String, String> = BTreeMap::new();
     let mut conflicting: BTreeSet<String> = BTreeSet::new();
     let mut bound: Vec<(String, String)> = Vec::new();
-    let mut stack = vec![node];
     while let Some(current) = stack.pop() {
         let mut cursor = current.walk();
         for child in current.named_children(&mut cursor) {
@@ -4108,7 +4134,14 @@ fn enclosing_class_members<'tree>(
                 }
                 // A grammar states the members in a body of their own --
                 // `class_body`, `enum_class_body`, `declaration_list`.
-                if child.kind().ends_with("body") || child.kind() == "declaration_list" {
+                if child.kind().ends_with("body")
+                    || child.kind() == "declaration_list"
+                    // Scala states a class's fields in its parameter list:
+                    // `class MapAdditiveMonoid[K, V](implicit V:
+                    // AdditiveSemigroup[V])` is where 381 of cats' receivers
+                    // are typed.
+                    || child.kind().ends_with("parameters")
+                {
                     let mut inner = child.walk();
                     members.extend(
                         child

@@ -19968,3 +19968,51 @@ fn a_go_struct_states_the_types_it_embeds() {
     );
     assert_ne!(edge.target, operation_of("Other"));
 }
+
+#[test]
+fn a_scala_implicit_named_after_its_type_is_a_value() {
+    // `class MapAdditiveMonoid[K, V](implicit V: AdditiveSemigroup[V])` names
+    // the instance after the type parameter it carries, and `V.plus(x, y)`
+    // was read as a call through a type parameter -- which names nothing --
+    // and then answered by the class the call sits in. cats writes 450 of
+    // them, and the class states the type in its own parameter list.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("semigroup.scala"),
+        "package algebra\n\ntrait AdditiveSemigroup[A] {\n  def plus(x: A, y: A): A\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("map.scala"),
+        "package algebra\n\nclass MapAdditiveMonoid[K, V](implicit V: AdditiveSemigroup[V]) {\n  def plus(xs: Int, ys: Int): Int = V.plus(xs, ys)\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let plus_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "plus"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.plus"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("V.plus")
+        })
+        .expect("the call through the implicit");
+    assert_eq!(
+        edge.target,
+        plus_of("AdditiveSemigroup"),
+        "the class parameter states that V is a value of that type"
+    );
+    assert_ne!(edge.target, plus_of("MapAdditiveMonoid"));
+}

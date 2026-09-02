@@ -3612,7 +3612,19 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // parameter, so no definition in the project can be named by it.
         // cats writes 178 of those, and each was reported as a choice
         // between every `map` the repository declares.
+        // A name the scope states a type for is a value, whatever it is
+        // called: scala names an implicit after the type it carries, and
+        // `class MapAdditiveMonoid[K, V](implicit V: AdditiveSemigroup[V])`
+        // makes `V.plus` that instance's rather than a type parameter's.
+        // The type has to be one the project declares -- `F: Functor[F]`
+        // states a type from outside it, and no definition here is that
+        // one's either.
+        let receiver_is_a_declared_type = call
+            .receiver_type
+            .as_deref()
+            .is_some_and(|stated| type_node_named(&context.graph, stated).is_some());
         if matches!(call.language.as_str(), "scala" | "kotlin" | "java")
+            && !receiver_is_a_declared_type
             && let Some((owner, _)) = split_qualified_call(&call.label)
             && names_a_type_parameter(owner)
         {
