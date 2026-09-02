@@ -980,9 +980,13 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         // A getter is read rather than called -- `bool get isEmpty =>
         // length == 0` is reached by writing `x.isEmpty` -- so no call
         // edge can ever point at one, and "nothing calls it" says nothing.
+        // A constructor is what a type states it can be built as, and it is
+        // applied where a value of that type is made rather than called.
+        // dune declares 3177 of them and gained 1085 orphans the day the
+        // graph learned to hold them.
         if matches!(
             node.metadata.get("definition_form").map(String::as_str),
-            Some("value") | Some("accessor")
+            Some("value") | Some("accessor") | Some("constructor")
         ) {
             continue;
         }

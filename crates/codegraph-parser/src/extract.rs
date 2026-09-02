@@ -1178,6 +1178,14 @@ pub(crate) fn collect_items(
             .items
             .extend(haskell_data_constructors(node, source, path));
     }
+    // OCaml states its constructors the same way -- `type sexp = Atom of
+    // string | List of sexp list` -- and dune applies them 4314 times to
+    // declarations the graph did not hold.
+    if language == Language::OCaml {
+        facts
+            .items
+            .extend(ocaml_data_constructors(node, source, path));
+    }
 
     let next_scope = next_scope.as_ref().unwrap_or(scope);
     let next_deferred = deferred || is_deferred_body(language, node.kind(), path);
@@ -1554,6 +1562,52 @@ fn ruby_local_names(method: Node<'_>, source: &[u8]) -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// The constructors an OCaml type declares: `type sexp = Atom of string |
+/// List of sexp list` declares `Atom` and `List`, and every `Atom s` in the
+/// project names this declaration. A polymorphic variant is written in the
+/// type as well and reaches the graph the same way.
+fn ocaml_data_constructors(node: Node<'_>, source: &[u8], path: &str) -> Vec<ParsedItem> {
+    if node.kind() != "type_definition" {
+        return Vec::new();
+    }
+    let mut items = Vec::new();
+    let mut stack = vec![node];
+    let mut owner: Option<String> = None;
+    while let Some(current) = stack.pop() {
+        if current.kind() == "type_binding" && owner.is_none() {
+            owner = current
+                .child_by_field_name("name")
+                .and_then(|name| node_text(name, source));
+        }
+        if matches!(
+            current.kind(),
+            "constructor_declaration" | "tag_specification"
+        ) && let Some(label) = current
+            .named_child(0)
+            .and_then(|name| node_text(name, source))
+            .filter(|label| !label.is_empty())
+        {
+            let mut metadata =
+                BTreeMap::from([("definition_form".to_string(), "constructor".to_string())]);
+            if let Some(owner) = owner.clone() {
+                metadata.insert("owner_type".to_string(), owner);
+            }
+            items.push(ParsedItem {
+                kind: ParsedItemKind::Function,
+                label,
+                span: span_for(path, current),
+                parent: None,
+                metadata,
+            });
+            continue;
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    items.sort_by_key(|item| item.span.start_line);
+    items
 }
 
 fn haskell_data_constructors(node: Node<'_>, source: &[u8], path: &str) -> Vec<ParsedItem> {
@@ -3157,24 +3211,6 @@ fn ocaml_included_modules(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// `EIP712._hashTypedDataV4` through its *second* base. Recording only the
 /// first found 312 of openzeppelin's 911 inherited calls; recording all of
 /// them finds 409.
-/// Whether an OCaml application applies a constructor or a functor rather
-/// than a function: both are written with an uppercase name, and a
-/// polymorphic variant with a backtick.
-fn ocaml_constructor_application(node: Node<'_>, source: &[u8]) -> bool {
-    let Some(callee) = node.child_by_field_name("function") else {
-        return false;
-    };
-    let Some(text) = node_text(callee, source) else {
-        return false;
-    };
-    let last = text.trim().rsplit('.').next().unwrap_or_default().trim();
-    last.starts_with('`')
-        || last
-            .chars()
-            .next()
-            .is_some_and(|first| first.is_uppercase())
-}
-
 /// The types a Go declaration embeds, which is how it says a method is also
 /// its own: `type Local struct { *Backend }` answers `Backend`'s methods,
 /// and an interface embeds the same way. An embedded field is written as a
@@ -5615,12 +5651,17 @@ pub(crate) fn is_call_node(language: Language, node: Node<'_>, source: &[u8]) ->
                     .child_by_field_name("function")
                     .is_some_and(|callee| callee.kind() == "apply")
         }
-        // `Some x`, `Ok v`, `Atom s` and `` `P n `` apply a constructor, and
-        // `Make (X)` applies a functor: an uppercase head in OCaml is never
-        // a function, so none of them is a call. dune writes 6428 of them,
-        // 4314 of which the graph reported as calls it could not place.
+        // `` `Payload v `` applies a polymorphic variant, which OCaml never
+        // declares anywhere -- it is structural -- so the application can
+        // only ever be a call to nothing. dune writes 523 of them. A
+        // constructor a type does declare is a different matter: the type
+        // states it and the application reaches it.
         Language::OCaml => {
-            node.kind() == "application_expression" && !ocaml_constructor_application(node, source)
+            node.kind() == "application_expression"
+                && !node
+                    .child_by_field_name("function")
+                    .and_then(|callee| node_text(callee, source))
+                    .is_some_and(|text| text.trim_start().starts_with('`'))
         }
         Language::Julia => {
             node.kind() == "call_expression" && !julia_is_short_definition_head(node)

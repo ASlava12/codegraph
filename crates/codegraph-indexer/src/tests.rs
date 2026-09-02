@@ -20214,11 +20214,11 @@ fn a_binding_from_a_foreign_package_leaves_the_project() {
 }
 
 #[test]
-fn an_ocaml_constructor_is_not_a_call() {
-    // `Some x`, `Ok v` and `` `P n `` apply a constructor and `Make (X)` a
-    // functor; an uppercase head in OCaml is never a function. dune recorded
-    // 6428 of them as calls, 4314 of which it then reported as calls it
-    // could not place.
+fn an_ocaml_constructor_is_a_declaration_a_call_can_reach() {
+    // `type sexp = Atom of string` declares `Atom`, and every `Atom s` in
+    // the project names that declaration -- dune applies its constructors
+    // 4314 times and the graph held none of them. A polymorphic variant is
+    // structural, declared nowhere, so `` `Payload v `` is not a call.
     let root = temp_project_root();
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("dune-project"), "(lang dune 3.0)\n").unwrap();
@@ -20229,6 +20229,26 @@ fn an_ocaml_constructor_is_not_a_call() {
     .unwrap();
 
     let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Atom"
+                && node.metadata.get("definition_form").map(String::as_str) == Some("constructor")
+        })
+        .expect("the type states the constructor");
+    assert_eq!(
+        declared.metadata.get("owner_type").map(String::as_str),
+        Some("sexp"),
+        "the constructor belongs to the type that declares it"
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == declared.id),
+        "the application reaches the declaration"
+    );
     let call_labels: Vec<&str> = graph
         .edges
         .iter()
@@ -20236,12 +20256,8 @@ fn an_ocaml_constructor_is_not_a_call() {
         .filter_map(|edge| edge.metadata.get("call_label").map(String::as_str))
         .collect();
     assert!(
-        !call_labels.contains(&"Atom"),
-        "a constructor application is not a call: {call_labels:?}"
-    );
-    assert!(
         !call_labels.iter().any(|label| label.starts_with('`')),
-        "a polymorphic variant is not a call: {call_labels:?}"
+        "a polymorphic variant is declared nowhere and is not a call: {call_labels:?}"
     );
     assert!(
         call_labels.contains(&"quote"),

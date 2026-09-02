@@ -523,6 +523,9 @@ function buildClientInsights(graph) {
       // A getter is read rather than called, so no call edge can ever
       // point at one. The CLI skips those too.
       node.metadata?.definition_form !== "accessor" &&
+      // A constructor is what a type states it can be built as, applied
+      // where a value is made rather than called. The CLI skips those too.
+      node.metadata?.definition_form !== "constructor" &&
       !entrypointIds.has(node.id) &&
       !calledIds.has(node.id) &&
       // A call the resolver could not settle names no definition, so every
