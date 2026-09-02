@@ -46,11 +46,12 @@ use codegraph_indexer::{
     IndexOptionOverrides, configured_index_options, scan_coverage, scan_project,
 };
 use codegraph_lsp::{
-    AutoEnrichmentOptions, SemanticLspCache, SemanticLspResponse, SemanticLspRunOptions,
-    SemanticWorkItemFilter, apply_semantic_graph_patch, auto_enrich_graph, discover_lsp_servers,
-    normalize_semantic_request_timeout_ms, normalize_semantic_work_item_limit,
-    run_semantic_execution_batch_cached, semantic_enrichment_plan_with_filter,
-    semantic_execution_batch, semantic_graph_patch_from_responses, semantic_readiness,
+    AutoEnrichmentOptions, AutoEnrichmentReport, SemanticLspCache, SemanticLspResponse,
+    SemanticLspRunOptions, SemanticWorkItemFilter, apply_semantic_graph_patch, auto_enrich_graph,
+    discover_lsp_servers, normalize_semantic_request_timeout_ms,
+    normalize_semantic_work_item_limit, run_semantic_execution_batch_cached,
+    semantic_enrichment_plan_with_filter, semantic_execution_batch,
+    semantic_graph_patch_from_responses, semantic_readiness,
 };
 use codegraph_parser::language_adapters;
 use codegraph_storage::{GraphCache, default_cache_dir, scan_project_cached};
@@ -1186,7 +1187,7 @@ fn scan_with_cache_status(
     cache: Option<GraphCache>,
 ) -> Result<(codegraph_core::CodeGraph, codegraph_storage::CacheInfo)> {
     let scanned = scan_project_cached(&path, &options, cache.as_ref())?;
-    let (graph, _) = auto_enrich_graph(
+    let (graph, enrichment) = auto_enrich_graph(
         &path,
         scanned.graph,
         semantic_cache_from_args(cache_args).as_ref(),
@@ -1195,7 +1196,27 @@ fn scan_with_cache_status(
             ..AutoEnrichmentOptions::default()
         },
     );
+    report_semantic_pass(&enrichment);
     Ok((graph, scanned.cache))
+}
+
+/// Say what the automatic semantic pass did. It is bounded so a scan stays
+/// fast, and the bound is small next to what it could ask -- 100 of 49649
+/// on this repository -- so a graph it touched is a sampled graph and the
+/// line says so. The report goes to stderr, since stdout is the graph.
+fn report_semantic_pass(report: &AutoEnrichmentReport) {
+    if !report.applied {
+        return;
+    }
+    let servers = if report.servers.is_empty() {
+        String::from("no server")
+    } else {
+        report.servers.join(", ")
+    };
+    eprintln!(
+        "semantic: {} edges from {} of {} candidates ({servers})",
+        report.semantic_edges, report.requested_work_items, report.total_work_items
+    );
 }
 
 fn semantic_cache_from_args(cache_args: &CacheArgs) -> Option<SemanticLspCache> {
