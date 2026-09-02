@@ -3953,6 +3953,25 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
         }
 
+        // A type the project does not declare is outside it, whatever its
+        // name looks like: cats writes `a: BigDecimal` and `a.pow(k)` is
+        // scala's, not the algebra instance that happens to share the file.
+        // An extension declared for that type is the exception -- the
+        // project does declare that one, which is why it is recorded.
+        if let Some(stated) = receiver_type
+            && !stated.contains('.')
+            && !stated.ends_with("()")
+            && type_node_named(&context.graph, stated).is_none()
+            && !targets.iter().any(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.metadata.get("reached_through"))
+                    .is_some_and(|extended| extended == stated)
+            })
+        {
+            add_external_call_placeholder(context, call, "external");
+            continue;
+        }
+
         // A receiver whose declared type comes from outside the repository
         // cannot be calling anything in it: `t.Fatalf()` on a `*testing.T` is
         // 7564 of terraform's calls, and reporting them as unresolved suggests

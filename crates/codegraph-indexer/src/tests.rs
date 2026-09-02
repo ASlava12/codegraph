@@ -18286,8 +18286,8 @@ fn a_call_through_a_type_parameter_names_no_definition() {
         .expect("the call is recorded");
     assert_eq!(
         call.metadata.get("resolution").map(String::as_str),
-        Some("unresolved"),
-        "a type parameter names no type the project declares"
+        Some("external"),
+        "a type parameter names no type the project declares, so the call leaves it"
     );
 
     fs::remove_dir_all(root).unwrap();
