@@ -3025,6 +3025,9 @@ pub(crate) fn assign_julia_included_modules(context: &mut IndexContext) {
 }
 
 pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
+    // Asked once per call and per candidate, so it is read off the node
+    // list once rather than three times per question.
+    let type_names = type_nodes_by_name(&context.graph);
     let pending_calls = std::mem::take(&mut context.pending_calls);
     // What the scan holds does not change while calls are resolved, so each
     // candidate path is looked for once.
@@ -3477,7 +3480,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         {
             let inherited: Vec<String> = graph_node(&context.graph, call.caller)
                 .and_then(|node| node.metadata.get("owner_type").cloned())
-                .map(|owner| ancestor_type_names(&context.graph, &owner))
+                .map(|owner| ancestor_type_names(&context.graph, &type_names, &owner))
                 .unwrap_or_default();
             // Nothing inherited declares it: the parent is outside the
             // project -- an interface, a library base -- and the honest
@@ -3598,7 +3601,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             let reachable_owners: Vec<String> = graph_node(&context.graph, call.caller)
                 .and_then(|node| node.metadata.get("owner_type").cloned())
                 .map(|owner| {
-                    let mut names = ancestor_type_names(&context.graph, &owner);
+                    let mut names = ancestor_type_names(&context.graph, &type_names, &owner);
                     names.push(owner);
                     names
                 })
@@ -3632,7 +3635,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         let receiver_is_a_declared_type = call
             .receiver_type
             .as_deref()
-            .is_some_and(|stated| type_node_named(&context.graph, stated).is_some());
+            .is_some_and(|stated| type_node_named(&context.graph, &type_names, stated).is_some());
         if matches!(call.language.as_str(), "scala" | "kotlin" | "java")
             && !receiver_is_a_declared_type
             && let Some((owner, _)) = split_qualified_call(&call.label)
@@ -4007,7 +4010,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         if let Some(stated) = receiver_type
             && !stated.contains('.')
             && !stated.ends_with("()")
-            && type_node_named(&context.graph, stated).is_none()
+            && type_node_named(&context.graph, &type_names, stated).is_none()
             && !targets.iter().any(|target| {
                 graph_node(&context.graph, *target)
                     .and_then(|node| node.metadata.get("reached_through"))
@@ -4112,7 +4115,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 // project declares and whose method is a base class's, and
                 // cats writes `fa: CommutativeSemigroup[A]` for a `combine`
                 // that `Semigroup` declares.
-                let inherited_from = ancestor_type_names(&context.graph, owner);
+                let inherited_from = ancestor_type_names(&context.graph, &type_names, owner);
                 let inherited = targets
                     .iter()
                     .copied()
@@ -4127,13 +4130,14 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 if !inherited.is_empty() {
                     basis = "receiver_type";
                     targets = inherited;
-                } else if type_node_named(&context.graph, owner)
+                } else if type_node_named(&context.graph, &type_names, owner)
                     .and_then(|node| node.metadata.get("extends"))
                     .is_some_and(|bases| {
                         bases.split(',').map(str::trim).any(|base| {
                             !base.is_empty()
                                 && type_node_named(
                                     &context.graph,
+                                    &type_names,
                                     base.rsplit('.').next().unwrap_or(base),
                                 )
                                 .is_none()
@@ -4190,7 +4194,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 // `Path.Build.append_source` names a module written inside
                 // path.ml, whose definitions belong to `Path`: the head of
                 // the path answers when the whole of it does not.
-                let mut reachable = ancestor_type_names(&context.graph, owner);
+                let mut reachable = ancestor_type_names(&context.graph, &type_names, owner);
                 // The owner is the last segment of what the call writes, so
                 // a nested module path has to be read from the label: the
                 // definitions of `Path.Build.append_source` sit in path.ml
@@ -4233,7 +4237,7 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     targets = inherited;
                 } else if !in_file
                     && (declared_owners.contains(owner)
-                        || type_node_named(&context.graph, owner).is_some())
+                        || type_node_named(&context.graph, &type_names, owner).is_some())
                 {
                     // The project declares the class or module the call
                     // names, and none of these definitions belongs to it:
@@ -4442,11 +4446,12 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     && graph_node(&context.graph, call.caller)
                         .and_then(|node| node.metadata.get("owner_type").cloned())
                         .is_some_and(|owner| {
-                            let ancestors = ancestor_type_names(&context.graph, &owner);
+                            let ancestors =
+                                ancestor_type_names(&context.graph, &type_names, &owner);
                             !ancestors.is_empty()
-                                && ancestors
-                                    .iter()
-                                    .any(|name| type_node_named(&context.graph, name).is_none())
+                                && ancestors.iter().any(|name| {
+                                    type_node_named(&context.graph, &type_names, name).is_none()
+                                })
                         });
                 // A shell command that is not a function this project
                 // declares and not the shell's own is on PATH: the shell
@@ -6024,7 +6029,7 @@ fn bare_call_stays_with_its_object(language: &str) -> bool {
     matches!(language, "scala" | "java")
 }
 
-fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {
+fn ancestor_type_names(graph: &CodeGraph, types: &TypeNodesByName, owner: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     // A contract composes rather than descends: solidity writes `is
     // AbstractSigner, EIP712, Paymaster` and reaches
@@ -6036,8 +6041,8 @@ fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {
         let Some(current) = queue.pop_front() else {
             break;
         };
-        let Some(declared) =
-            type_node_named(graph, &current).and_then(|node| node.metadata.get("extends").cloned())
+        let Some(declared) = type_node_named(graph, types, &current)
+            .and_then(|node| node.metadata.get("extends").cloned())
         else {
             continue;
         };
@@ -6060,34 +6065,66 @@ fn ancestor_type_names(graph: &CodeGraph, owner: &str) -> Vec<String> {
 /// with: a Rails route names `Admin::SettingsController` and the file
 /// declares exactly that, while a PHP route names `AlbumController` for a
 /// class the file writes under a namespace.
-fn type_node_named<'graph>(graph: &'graph CodeGraph, name: &str) -> Option<&'graph Node> {
+/// Every name a type answers to, and the node that answers it: the label
+/// itself, and the tail of a qualified label. A module that states what it
+/// re-exports answers the same way, after the types.
+///
+/// Built once and then asked. Reading it off the node list per question is
+/// three passes over every node in the graph, and the questions are asked
+/// per call: terraform has 132813 nodes and 102779 calls, and its scan took
+/// 38 seconds for that reason.
+pub(crate) type TypeNodesByName = BTreeMap<String, NodeId>;
+
+pub(crate) fn type_nodes_by_name(graph: &CodeGraph) -> TypeNodesByName {
+    let mut named: TypeNodesByName = BTreeMap::new();
+    let mut tails: TypeNodesByName = BTreeMap::new();
+    let mut modules: TypeNodesByName = BTreeMap::new();
+    for node in &graph.nodes {
+        match node.kind {
+            NodeKind::Type => {
+                named.entry(node.label.clone()).or_insert(node.id);
+                let tail = node
+                    .label
+                    .rsplit(['\\', ':'])
+                    .next()
+                    .unwrap_or(&node.label)
+                    .to_string();
+                tails.entry(tail).or_insert(node.id);
+            }
+            NodeKind::Module if node.metadata.contains_key("extends") => {
+                modules.entry(node.label.clone()).or_insert(node.id);
+                let tail = node
+                    .label
+                    .rsplit(['\\', ':'])
+                    .next()
+                    .unwrap_or(&node.label)
+                    .to_string();
+                modules.entry(tail).or_insert(node.id);
+            }
+            _ => {}
+        }
+    }
+    // The order the search used: the label, then a tail, then a module.
+    for (name, id) in tails.into_iter().chain(modules) {
+        named.entry(name).or_insert(id);
+    }
+    named
+}
+
+fn type_node_named<'graph>(
+    graph: &'graph CodeGraph,
+    types: &TypeNodesByName,
+    name: &str,
+) -> Option<&'graph Node> {
     let tail = name.rsplit(['\\', ':']).next().unwrap_or(name);
-    graph
-        .nodes
-        .iter()
-        .find(|node| node.kind == NodeKind::Type && node.label == name)
-        .or_else(|| {
-            graph.nodes.iter().find(|node| {
-                node.kind == NodeKind::Type
-                    && node.label.rsplit(['\\', ':']).next().unwrap_or(&node.label) == tail
-            })
-        })
-        // A qualified call in OCaml, Haskell or Erlang names a module, and
-        // what a module re-exports is recorded on it the way a class records
-        // what it extends. Only the ones that state something are worth
-        // looking at: dune declares four modules named `Fiber` and one of
-        // them is the file that `include`s Core.
-        .or_else(|| {
-            graph.nodes.iter().find(|node| {
-                node.kind == NodeKind::Module
-                    && node.metadata.contains_key("extends")
-                    && (node.label == name
-                        || node.label.rsplit(['\\', ':']).next().unwrap_or(&node.label) == tail)
-            })
-        })
+    types
+        .get(name)
+        .or_else(|| types.get(tail))
+        .and_then(|id| graph_node(graph, *id))
 }
 
 pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
+    let type_names = type_nodes_by_name(&context.graph);
     let pending = std::mem::take(&mut context.pending_route_handlers);
     for reference in pending {
         // A route's handler is written in the language the route is
@@ -6163,7 +6200,7 @@ pub(crate) fn resolve_pending_route_handlers(context: &mut IndexContext) {
             // whose actions are all `Admin::SettingsController`'s, and a
             // route that reaches nothing is where a flow stops.
             if owned.is_empty() {
-                for ancestor in ancestor_type_names(&context.graph, owner) {
+                for ancestor in ancestor_type_names(&context.graph, &type_names, owner) {
                     owned = targets
                         .iter()
                         .copied()
