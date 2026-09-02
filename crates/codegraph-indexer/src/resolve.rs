@@ -7779,20 +7779,21 @@ pub(crate) fn resolve_function_targets(
     symbols: &BTreeMap<String, Vec<NodeId>>,
     label: &str,
 ) -> Vec<NodeId> {
-    let mut targets = Vec::new();
     // The keys are slices of the label the caller already holds: building
     // them as owned strings cost terraform's 100000 calls two allocations
     // each before a single map lookup happened.
     let (compact, simple) = symbol_key_parts(label);
-    for key in [compact, simple] {
-        if key == simple && !std::ptr::eq(key, compact) && compact == simple {
-            continue;
-        }
-        if let Some(ids) = symbols.get(key) {
-            for id in ids {
-                if !targets.contains(id) {
-                    targets.push(*id);
-                }
+    // Each key's own list is already without repeats, so only the second
+    // one is checked against the first: `Run` names hundreds of
+    // definitions in terraform, and checking each against a growing list
+    // made the merge cost grow with the square of that.
+    let mut targets: Vec<NodeId> = symbols.get(compact).cloned().unwrap_or_default();
+    if simple != compact
+        && let Some(ids) = symbols.get(simple)
+    {
+        for id in ids {
+            if !targets.contains(id) {
+                targets.push(*id);
             }
         }
     }
