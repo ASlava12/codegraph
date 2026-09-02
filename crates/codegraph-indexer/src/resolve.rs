@@ -4002,11 +4002,19 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     let Some(node) = graph_node(&context.graph, *target) else {
                         return false;
                     };
-                    if node
+                    // An extension method is reached through the type it
+                    // extends, which is not the class that declares it:
+                    // `cancellationToken.ThrowIfCancelled()` is
+                    // `AsyncUtils`'s and names `CancellationToken`.
+                    let named_by_the_receiver = node
                         .metadata
                         .get("owner_type")
-                        .is_none_or(|declared| declared != owner)
-                    {
+                        .is_some_and(|declared| declared == owner)
+                        || node
+                            .metadata
+                            .get("reached_through")
+                            .is_some_and(|extended| extended == owner);
+                    if !named_by_the_receiver {
                         return false;
                     }
                     package_candidates.as_deref().is_none_or(|candidates| {

@@ -20016,3 +20016,60 @@ fn a_scala_implicit_named_after_its_type_is_a_value() {
     );
     assert_ne!(edge.target, plus_of("MapAdditiveMonoid"));
 }
+
+#[test]
+fn a_csharp_extension_is_reached_through_the_type_it_extends() {
+    // `static bool IsValueType(this Type type)` belongs to the static class
+    // that declares it and is reached through `Type`, which that class never
+    // names. Newtonsoft.Json declares 272 such methods and Polly 137.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("TypeExtensions.cs"),
+        "namespace App;\n\npublic static class TypeExtensions\n{\n    public static bool IsValueType(this Reflected type) { return true; }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Reflected.cs"),
+        "namespace App;\n\npublic class Reflected\n{\n}\n",
+    )
+    .unwrap();
+    // A namesake, so the name alone settles nothing.
+    fs::write(
+        root.join("src").join("Other.cs"),
+        "namespace App;\n\npublic class Other\n{\n    public bool IsValueType() { return false; }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("Caller.cs"),
+        "namespace App;\n\npublic class Caller\n{\n    public bool Check(Reflected type)\n    {\n        return type.IsValueType();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared_by = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "IsValueType"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.IsValueType"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("type.IsValueType")
+        })
+        .expect("the call through the extended type");
+    assert_eq!(
+        edge.target,
+        declared_by("TypeExtensions"),
+        "the receiver's type reaches the extension declared for it"
+    );
+    assert_ne!(edge.target, declared_by("Other"));
+}

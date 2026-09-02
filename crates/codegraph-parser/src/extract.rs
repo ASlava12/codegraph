@@ -2199,6 +2199,14 @@ pub(crate) fn classify_node(
         if let Some(visibility) = visibility_label(language, node, source, &label) {
             metadata.insert("visibility".to_string(), visibility.to_string());
         }
+        // An extension method is reached through the type it extends rather
+        // than the class that declares it: C# writes `static bool
+        // IsValueType(this Type type)` and Kotlin `fun BufferedSink.write()`.
+        // Newtonsoft.Json declares 95 of them and Polly 137, and a call
+        // through one names a type the declaring class never mentions.
+        if let Some(extended) = extended_type_label(language, node, source) {
+            metadata.insert("reached_through".to_string(), extended);
+        }
         // What a Go signature hands back types every `mgr := b.StateMgr()` a
         // caller writes. terraform binds 1492 of the receivers it could not
         // place that way, and `StateMgr` alone 245 times.
@@ -4701,6 +4709,61 @@ fn go_composite_literal_type(value: Node<'_>, source: &[u8]) -> Option<String> {
 }
 
 /// Types stated by `var name Type` inside a body.
+/// The type an extension method is reached through: the `this` parameter a
+/// C# static method takes, or the receiver a Kotlin function is declared on.
+fn extended_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+    match language {
+        Language::CSharp => {
+            let parameters = node.child_by_field_name("parameters")?;
+            let mut cursor = parameters.walk();
+            let first = parameters
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "parameter")?;
+            let mut modifiers = first.walk();
+            let extends = first
+                .children(&mut modifiers)
+                .any(|child| node_text(child, source).as_deref() == Some("this"));
+            if !extends {
+                return None;
+            }
+            first
+                .child_by_field_name("type")
+                .and_then(|stated| csharp_type_name(stated, source))
+        }
+        Language::Kotlin => {
+            let mut cursor = node.walk();
+            let receiver = node
+                .named_children(&mut cursor)
+                .find(|child| child.kind() == "receiver_type")?;
+            let mut inner = receiver.walk();
+            receiver
+                .named_children(&mut inner)
+                .find_map(|child| match child.kind() {
+                    "user_type" | "type_identifier" | "simple_identifier" => {
+                        kotlin_stated_type_name(child, source)
+                    }
+                    _ => None,
+                })
+                .or_else(|| kotlin_stated_type_name(receiver, source))
+        }
+        _ => None,
+    }
+}
+
+/// The bare name a Kotlin type expression states.
+fn kotlin_stated_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let text = node_text(node, source)?;
+    let name = text
+        .trim()
+        .trim_end_matches('?')
+        .split(['<', '.', ' '])
+        .next_back()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')).then_some(name)
+}
+
 /// The type a Go signature hands back, as a name: `func (b *Local)
 /// StateMgr(..) (statemgr.Full, error)` hands back `statemgr.Full`. `error`
 /// is the language's own and names no definition, so a signature that hands
