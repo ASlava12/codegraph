@@ -926,6 +926,40 @@ fn reached_types(graph: &CodeGraph) -> BTreeSet<NodeId> {
         .collect()
 }
 
+/// Whether the language calls this name rather than a caller writing it.
+/// PHP states its magic methods outright, and python writes a dunder:
+/// `__enter__` is run by `with`, `__eq__` by `==`. A constructor is not one
+/// of these -- `new Foo(..)` and `Foo(..)` name it -- and neither is a
+/// python private method, which is written `self.__helper()` and reaches
+/// the graph as a call.
+pub(crate) fn language_calls_it(label: &str) -> bool {
+    const PHP_MAGIC: [&str; 15] = [
+        "__invoke",
+        "__toString",
+        "__get",
+        "__set",
+        "__isset",
+        "__unset",
+        "__call",
+        "__callStatic",
+        "__clone",
+        "__destruct",
+        "__sleep",
+        "__wakeup",
+        "__serialize",
+        "__unserialize",
+        "__debugInfo",
+    ];
+    let name = label.rsplit(['.', ':']).next().unwrap_or(label).trim();
+    if PHP_MAGIC.contains(&name) {
+        return true;
+    }
+    name.starts_with("__")
+        && name.ends_with("__")
+        && name.len() > 4
+        && !matches!(name, "__init__" | "__new__")
+}
+
 pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let generated = files_a_generator_wrote(graph);
     let entrypoints: BTreeSet<NodeId> = graph
@@ -997,6 +1031,14 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
             node.metadata.get("definition_form").map(String::as_str),
             Some("value") | Some("accessor") | Some("constructor")
         ) {
+            continue;
+        }
+        // A name the language calls is never written at a call site:
+        // `$handler($request)` runs `__invoke`, `echo $x` runs
+        // `__toString`, and python spells the same thing `__enter__`. koel
+        // reported 70 of them, guzzle 24 and monolog 20. A constructor is
+        // different -- `new Foo` names it -- so it stays.
+        if language_calls_it(&node.label) {
             continue;
         }
         // A test is run by its runner, which no edge records: `#[test]
@@ -6749,4 +6791,26 @@ pub(crate) fn is_node_builtin_module(module: &str) -> bool {
             | "worker_threads"
             | "zlib"
     )
+}
+
+#[cfg(test)]
+mod language_called_names_tests {
+    use super::language_calls_it;
+
+    #[test]
+    fn the_language_calls_a_magic_name_and_a_dunder() {
+        assert!(language_calls_it("__invoke"));
+        assert!(language_calls_it("Handler.__toString"));
+        assert!(language_calls_it("__enter__"));
+        assert!(language_calls_it("Node::__eq__"));
+    }
+
+    #[test]
+    fn a_constructor_and_a_private_method_are_named_by_a_caller() {
+        assert!(!language_calls_it("__construct"));
+        assert!(!language_calls_it("__init__"));
+        assert!(!language_calls_it("__new__"));
+        assert!(!language_calls_it("__helper"));
+        assert!(!language_calls_it("run"));
+    }
 }

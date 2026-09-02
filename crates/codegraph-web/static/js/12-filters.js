@@ -403,6 +403,46 @@ function filesAGeneratorWrote(graph) {
   return generated;
 }
 
+// Whether the language calls this name rather than a caller writing it.
+// PHP states its magic methods outright, and python writes a dunder:
+// `__enter__` is run by `with`, `__eq__` by `==`. A constructor is not one
+// of these -- `new Foo(..)` and `Foo(..)` name it -- and neither is a
+// python private method, which is written `self.__helper()` and reaches
+// the graph as a call. The CLI asks the same question; koel reported 70
+// of these, guzzle 24 and monolog 20.
+const PHP_MAGIC_NAMES = [
+  "__invoke",
+  "__toString",
+  "__get",
+  "__set",
+  "__isset",
+  "__unset",
+  "__call",
+  "__callStatic",
+  "__clone",
+  "__destruct",
+  "__sleep",
+  "__wakeup",
+  "__serialize",
+  "__unserialize",
+  "__debugInfo",
+];
+
+function languageCallsIt(label) {
+  const name = String(label ?? "")
+    .split(/[.:]/)
+    .pop()
+    .trim();
+  if (PHP_MAGIC_NAMES.includes(name)) return true;
+  return (
+    name.startsWith("__") &&
+    name.endsWith("__") &&
+    name.length > 4 &&
+    name !== "__init__" &&
+    name !== "__new__"
+  );
+}
+
 function isTheProgramsOwn(node, generated) {
   // A file node carries its path in its label and has no span of its own,
   // and ruby and lua write plenty of calls at the top of a file where the
@@ -526,6 +566,9 @@ function buildClientInsights(graph) {
       // A constructor is what a type states it can be built as, applied
       // where a value is made rather than called. The CLI skips those too.
       node.metadata?.definition_form !== "constructor" &&
+      // A name the language calls is never written at a call site:
+      // `$handler($request)` runs `__invoke`. The CLI skips those too.
+      !languageCallsIt(node.label) &&
       !entrypointIds.has(node.id) &&
       !calledIds.has(node.id) &&
       // A call the resolver could not settle names no definition, so every

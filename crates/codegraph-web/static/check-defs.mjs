@@ -181,8 +181,11 @@ const pathTokens = (text) =>
   );
 const coreSource = rustSources.find(([name]) => name === "codegraph-core/lib.rs")[1];
 const rustPathTokens = pathTokens(
+  // `is_test_like_source_path` is the memo in front of the rule; the rule
+  // itself is `test_like_source_path`, and reading the wrapper found an
+  // empty list that agreed with nothing.
   blockAfter(coreSource, "fn is_test_word(") +
-    blockAfter(coreSource, "pub fn is_test_like_source_path("),
+    blockAfter(coreSource, "fn test_like_source_path("),
 );
 const jsPathTokens = pathTokens(blockAfter(raw, "function isTestLikeSourcePath("));
 {
