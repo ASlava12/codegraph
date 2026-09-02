@@ -3763,6 +3763,27 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // signature rather than in its own line, so the parser records which
         // call bound the name and the join happens here, where every
         // definition is known.
+        // A name bound to what a foreign package hands back is that
+        // package's, and so is every call written on it: terraform binds
+        // `f := os.Open(..)` and then calls `f.Close()`, which is not the
+        // repository's own `Close`.
+        if !written_through_a_chain_of_values
+            && let Some(package) = call
+                .receiver_type
+                .as_deref()
+                .and_then(|bound_by| bound_by.strip_suffix("()"))
+                .and_then(|callee| callee.rsplit_once('.'))
+                .map(|(package, _)| package)
+            && context
+                .file_import_qualifiers
+                .get(call.span.path.as_str())
+                .and_then(|qualifiers| qualifiers.get(package))
+                == Some(&ImportedPackage::External)
+        {
+            add_external_call_placeholder(context, call, "external");
+            continue;
+        }
+
         let receiver_type = match call.receiver_type.as_deref() {
             // The type stated for `s` says nothing about `s.mu.Lock`: the
             // method belongs to the field, and the chain is what says so.

@@ -20167,3 +20167,48 @@ fn a_csharp_base_call_means_the_class_it_extends() {
     );
     assert_ne!(edge.target, close_of("BsonReader"));
 }
+
+#[test]
+fn a_binding_from_a_foreign_package_leaves_the_project() {
+    // `f, err := os.Open(path)` binds `f` to what a package outside the
+    // repository hands back, so `f.Close()` is not the repository's own
+    // `Close`. terraform writes 881 calls on such bindings, and they were
+    // answering with whatever shared the name -- `f.Close` with a
+    // `SyncState`, `info.IsDir` with a snapshot's file info.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("states")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("states").join("sync.go"),
+        "package states\n\ntype SyncState struct{}\n\nfunc (s *SyncState) Close() error {\n\treturn nil\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal").join("states").join("read.go"),
+        "package states\n\nimport (\n\t\"os\"\n)\n\nfunc Read(path string) error {\n\tf, err := os.Open(path)\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn f.Close()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let own = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "Close"
+                && node.metadata.get("owner_type").map(String::as_str) == Some("SyncState")
+        })
+        .expect("the project's own Close");
+    assert!(
+        !graph
+            .edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Calls && edge.target == own.id),
+        "a call on what a foreign package handed back is not the project's own method"
+    );
+    let leaves = graph.nodes.iter().any(|node| {
+        node.kind == NodeKind::ExternalDependency
+            && node.label == "f.Close"
+            && node.metadata.get("resolution").map(String::as_str) == Some("external")
+    });
+    assert!(leaves, "the call is recorded as leaving the project");
+}
