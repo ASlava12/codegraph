@@ -2545,6 +2545,13 @@ pub(crate) fn go_qualified_type_name(node: Node<'_>, source: &[u8]) -> Option<St
                 None => name,
             })
         }
+        // `ExecutionContextState[R, D, C]` names one type, whatever it is
+        // instantiated with: gqlgen's generated `executionContext` embeds
+        // exactly that, and the 1702 calls it promotes -- `ec.Error`,
+        // `ec.Recover` -- had no owner to reach for.
+        "generic_type" => node
+            .child_by_field_name("type")
+            .and_then(|inner| go_qualified_type_name(inner, source)),
         "pointer_type" | "slice_type" | "array_type" | "parenthesized_type" => node
             .named_child(0)
             .and_then(|inner| go_qualified_type_name(inner, source)),

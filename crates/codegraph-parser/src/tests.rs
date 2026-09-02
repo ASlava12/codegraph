@@ -4362,3 +4362,26 @@ class ExampleTest
     };
     assert_eq!(stated("append").as_deref(), Some("MockHandler"));
 }
+
+#[test]
+fn reads_a_generic_type_a_go_struct_embeds() {
+    // gqlgen's generated `executionContext` embeds a generic state that
+    // embeds the operation context, and `ec.Error(..)` is the operation
+    // context's -- 1695 calls that read as a choice between every `Error`
+    // in the project.
+    let source = br#"
+package generated
+
+type executionContext struct {
+	*graphql.ExecutionContextState[ResolverRoot, DirectiveRoot, ComplexityRoot]
+}
+"#;
+    let parsed = parse_source("_examples/generated.go", source, Language::Go).unwrap();
+    let embedded = parsed
+        .items
+        .iter()
+        .find(|item| item.kind == ParsedItemKind::Type && item.label == "executionContext")
+        .and_then(|item| item.metadata.get("extends").cloned());
+
+    assert_eq!(embedded.as_deref(), Some("ExecutionContextState"));
+}
