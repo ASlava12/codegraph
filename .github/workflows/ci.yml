@@ -31,6 +31,19 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install the libraries the desktop window needs
+        run: |
+          # `codegraph-ui` is a tao/wry window, and on linux that means GTK
+          # and WebKit. Without them the workspace stops at `glib-sys`
+          # before a single check runs, which is every red run this
+          # repository has ever had. macOS builds the same crate against
+          # frameworks the system already carries, so this is the one
+          # platform that has to say it out loud.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev
+
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
