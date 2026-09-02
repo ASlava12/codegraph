@@ -5662,7 +5662,13 @@ pub(crate) fn link_imports_to_package_hubs(context: &mut IndexContext) {
             let mut best: Option<(&str, NodeId)> = None;
             for (id, hub) in &go_hubs {
                 let module = &id["go:".len()..];
-                if (path == *module || path.starts_with(&format!("{module}/")))
+                // `format!` here builds a string per import and per
+                // declared module: terraform has 13680 imports and a
+                // hundred modules, and the prefix can be checked without
+                // building anything.
+                let under_module = path.strip_prefix(module);
+                if (path == *module
+                    || under_module.is_some_and(|rest| rest.starts_with('/')))
                     && best.is_none_or(|(current, _)| module.len() > current.len())
                 {
                     best = Some((module, *hub));
