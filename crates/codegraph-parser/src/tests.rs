@@ -4114,3 +4114,73 @@ fn objective_c_names_a_method_by_its_selector() {
         "`@throw` is where the method gives up"
     );
 }
+
+#[test]
+fn reads_a_declaration_behind_an_attribute_macro() {
+    // spdlog writes exactly this, and the grammar, which has never seen
+    // `SPDLOG_API`, read the class as an error: the class and both of its
+    // methods had no node at all.
+    let source = br#"
+#define SPDLOG_API __attribute__((visibility("default")))
+#define SPDLOG_INLINE inline
+
+class SPDLOG_API async_logger final {
+public:
+    void flush_();
+};
+
+SPDLOG_INLINE void async_logger::sink_it_(const log_msg &msg) {
+    flush_();
+}
+"#;
+    let parsed = parse_source("include/spdlog/async_logger.h", source, Language::Cpp).unwrap();
+
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.label == "async_logger" && item.kind == ParsedItemKind::Type),
+        "the class behind SPDLOG_API is a type: {:?}",
+        parsed
+            .items
+            .iter()
+            .map(|item| &item.label)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.label == "sink_it_" && item.kind == ParsedItemKind::Function),
+        "the method behind SPDLOG_INLINE is a function"
+    );
+    // The blanked name is not a definition of its own, and the span still
+    // points at the line the declaration is written on.
+    assert!(!parsed.items.iter().any(|item| item.label == "SPDLOG_API"));
+    let class = parsed
+        .items
+        .iter()
+        .find(|item| item.label == "async_logger" && item.kind == ParsedItemKind::Type)
+        .unwrap();
+    assert_eq!(class.span.start_line, 5);
+}
+
+#[test]
+fn keeps_the_first_reading_when_blanking_helps_nothing() {
+    // A name in capitals in front of another name is not always a macro:
+    // `FILE stream` names a type the grammar knows. Nothing here fails to
+    // parse, so nothing is read a second time.
+    let parsed = parse_source(
+        "src/io.c",
+        b"#include <stdio.h>\nint main(void) {\n    FILE *stream = 0;\n    return 0;\n}\n",
+        Language::C,
+    )
+    .unwrap();
+
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.label == "main" && item.kind == ParsedItemKind::Entrypoint)
+    );
+}

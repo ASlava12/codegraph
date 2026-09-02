@@ -31,9 +31,25 @@ pub fn parse_source(
     // at all. Blanking the line keeps every other line where it was.
     let masked = mask_macro_namespace_lines(language, source_text);
     let source_text = masked.as_deref().unwrap_or(source_text);
-    let tree = parser
+    let mut tree = parser
         .parse(source_text, None)
         .ok_or(ParseError::ParseFailed { language })?;
+    // A file that would not parse is read a second time with the macros
+    // that stand in front of a declaration blanked, and the second reading
+    // is kept only when it holds fewer errors than the first.
+    let mut source_text = source_text;
+    let repaired = tree
+        .root_node()
+        .has_error()
+        .then(|| mask_attribute_macros(language, source_text))
+        .flatten();
+    if let Some(text) = repaired.as_deref()
+        && let Some(retry) = parser.parse(text, None)
+        && error_node_count(retry.root_node()) < error_node_count(tree.root_node())
+    {
+        tree = retry;
+        source_text = text;
+    }
     let root = tree.root_node();
     let mut facts = CollectedFacts::default();
     let config_aliases = if language == Language::Nix {
@@ -217,6 +233,128 @@ fn mask_macro_namespace_lines(language: Language, source: &str) -> Option<String
         }
     }
     Some(masked)
+}
+
+/// A macro standing in front of a declaration -- `class SPDLOG_API logger`,
+/// `SPDLOG_INLINE void load_levels(..)` -- is a name the grammar has never
+/// seen, and the declaration behind it is read as an error: nlohmann/json
+/// hid 425 functions that way and spdlog 68. Blanking the name keeps every
+/// other byte where it was, so a span still points at the same text.
+///
+/// Only a file that already failed to parse is read this way, and only
+/// where a name in capitals stands in front of another name -- never a
+/// call, never a value, and never a line the preprocessor, a string or a
+/// comment owns, whose text other rules read.
+fn mask_attribute_macros(language: Language, source: &str) -> Option<String> {
+    if !matches!(language, Language::C | Language::Cpp | Language::ObjectiveC) {
+        return None;
+    }
+    let bytes = source.as_bytes();
+    let mut masked = source.to_string();
+    let mut blanked = false;
+    let mut index = 0;
+    let mut at_line_start = true;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\n' => {
+                at_line_start = true;
+                index += 1;
+            }
+            b' ' | b'\t' | b'\r' => index += 1,
+            // What the preprocessor owns, including the lines a backslash
+            // joins to it: a name blanked inside a macro body is a name the
+            // body no longer states.
+            b'#' if at_line_start => {
+                while index < bytes.len() {
+                    if bytes[index] == b'\n' {
+                        let joined = source[..index].trim_end().ends_with('\\');
+                        index += 1;
+                        if !joined {
+                            break;
+                        }
+                    } else {
+                        index += 1;
+                    }
+                }
+                at_line_start = true;
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+                at_line_start = false;
+            }
+            quote @ (b'"' | b'\'') => {
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        index += 2;
+                        continue;
+                    }
+                    if bytes[index] == quote || bytes[index] == b'\n' {
+                        index += 1;
+                        break;
+                    }
+                    index += 1;
+                }
+                at_line_start = false;
+            }
+            first if first.is_ascii_uppercase() => {
+                let mut end = index;
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_uppercase()
+                        || bytes[end].is_ascii_digit()
+                        || bytes[end] == b'_')
+                {
+                    end += 1;
+                }
+                let stands_alone = (index == 0
+                    || !(bytes[index - 1].is_ascii_alphanumeric()
+                        || matches!(bytes[index - 1], b'_' | b'.' | b'>' | b':')))
+                    && (end >= bytes.len()
+                        || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_'));
+                let mut after = end;
+                while after < bytes.len() && matches!(bytes[after], b' ' | b'\t') {
+                    after += 1;
+                }
+                let stands_in_front_of_a_name = after > end
+                    && after < bytes.len()
+                    && (bytes[after].is_ascii_alphabetic() || bytes[after] == b'_');
+                if stands_alone && stands_in_front_of_a_name && end - index >= 3 {
+                    masked.replace_range(index..end, &" ".repeat(end - index));
+                    blanked = true;
+                }
+                index = end.max(index + 1);
+                at_line_start = false;
+            }
+            _ => {
+                index += 1;
+                at_line_start = false;
+            }
+        }
+    }
+    blanked.then_some(masked)
+}
+
+/// How many errors a reading holds. Only the branches that carry one are
+/// walked: `has_error` marks the path down to each.
+fn error_node_count(node: Node<'_>) -> usize {
+    if !node.has_error() && !node.is_missing() {
+        return 0;
+    }
+    if node.is_error() || node.is_missing() {
+        return 1;
+    }
+    let mut cursor = node.walk();
+    node.children(&mut cursor).map(error_node_count).sum()
 }
 
 /// The 1-based line of the first error or missing node in the tree. Only
