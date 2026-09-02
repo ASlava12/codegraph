@@ -4184,3 +4184,69 @@ fn keeps_the_first_reading_when_blanking_helps_nothing() {
             .any(|item| item.label == "main" && item.kind == ParsedItemKind::Entrypoint)
     );
 }
+
+#[test]
+fn reads_a_class_whose_body_a_branch_interrupts() {
+    // Newtonsoft.Json writes this, and the directive was read as the name
+    // of the class behind it while the `else if` became a function `if`.
+    let source = br#"
+namespace Newtonsoft.Json
+{
+#if HAVE_ASYNC_DISPOSABLE
+    public abstract partial class JsonReader
+    {
+        public void Close()
+        {
+            if (value is string s)
+            {
+                Skip();
+            }
+            else if (value is int i)
+            {
+                Skip();
+            }
+        }
+    }
+#endif
+}
+"#;
+    let parsed = parse_source("Src/JsonReader.Async.cs", source, Language::CSharp).unwrap();
+    let labels: Vec<_> = parsed
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
+
+    assert!(
+        labels.contains(&"JsonReader"),
+        "the class behind the directive is a type: {labels:?}"
+    );
+    assert!(!labels.contains(&"if"), "`else if` is not a definition");
+    assert!(!labels.contains(&"HAVE_ASYNC_DISPOSABLE"));
+}
+
+#[test]
+fn reads_a_swift_type_whose_body_a_branch_interrupts() {
+    let source = br#"
+final class Protected<Value> {
+    #if canImport(Darwin)
+    private let lock = UnfairLock()
+    #else
+    private let lock = PosixLock()
+    #endif
+
+    func read() -> Value {
+        return lock.around { value }
+    }
+}
+"#;
+    let parsed = parse_source("Source/Core/Protected.swift", source, Language::Swift).unwrap();
+    let labels: Vec<_> = parsed
+        .items
+        .iter()
+        .map(|item| item.label.as_str())
+        .collect();
+
+    assert!(labels.contains(&"Protected"), "{labels:?}");
+    assert!(labels.contains(&"read"), "{labels:?}");
+}

@@ -233,6 +233,21 @@ fn js_member_of_every_value(method: &str) -> bool {
 /// Whether a C# receiver is spelled the way the language spells a type: a
 /// static call names one, an instance call names a local, field or property.
 fn receiver_names_a_csharp_type(receiver: &str) -> bool {
+    // A static call names the type first: `JsonConvert.SerializeObject`,
+    // `Newtonsoft.Json.JsonConvert.SerializeObject`. `a1.Length.CompareTo`
+    // starts at a value, and the capital on the member it reaches says
+    // nothing about whose method is called -- reading that one as a type
+    // made `int.CompareTo` into `JValue.CompareTo`.
+    if receiver
+        .split('.')
+        .next()
+        .unwrap_or(receiver)
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_lowercase() || first == '_')
+    {
+        return false;
+    }
     let last = receiver.rsplit('.').next().unwrap_or(receiver);
     last.chars().next().is_some_and(char::is_uppercase)
 }

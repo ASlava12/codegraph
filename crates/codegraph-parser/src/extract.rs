@@ -41,7 +41,7 @@ pub fn parse_source(
     let repaired = tree
         .root_node()
         .has_error()
-        .then(|| mask_attribute_macros(language, source_text))
+        .then(|| mask_for_a_second_reading(language, source_text))
         .flatten();
     if let Some(text) = repaired.as_deref()
         && let Some(retry) = parser.parse(text, None)
@@ -245,10 +245,56 @@ fn mask_macro_namespace_lines(language: Language, source: &str) -> Option<String
 /// where a name in capitals stands in front of another name -- never a
 /// call, never a value, and never a line the preprocessor, a string or a
 /// comment owns, whose text other rules read.
-fn mask_attribute_macros(language: Language, source: &str) -> Option<String> {
-    if !matches!(language, Language::C | Language::Cpp | Language::ObjectiveC) {
+fn mask_for_a_second_reading(language: Language, source: &str) -> Option<String> {
+    match language {
+        Language::C | Language::Cpp | Language::ObjectiveC => mask_attribute_macros(source),
+        Language::CSharp | Language::Swift => mask_conditional_compilation(source),
+        _ => None,
+    }
+}
+
+/// A branch the compiler chooses is written in the middle of whatever it
+/// belongs to: `#if canImport(Security)` inside a type body, and in
+/// Newtonsoft.Json inside an argument list and a switch. The grammar reads
+/// the directive as part of what surrounds it, and what surrounds it is
+/// then read as something else -- `#if HAVE_ASYNC_DISPOSABLE` was the name
+/// of `JsonReader`, and 50 `else if` lines were functions called `if`.
+///
+/// Blanking the directive lines leaves every branch's code in place, which
+/// is more than the compiler would keep; the second reading is taken only
+/// when it holds fewer errors than the first.
+fn mask_conditional_compilation(source: &str) -> Option<String> {
+    let opens_a_branch = |line: &str| {
+        let trimmed = line.trim_start();
+        ["#if", "#elif", "#elseif", "#else", "#endif"]
+            .iter()
+            .any(|directive| {
+                trimmed.strip_prefix(directive).is_some_and(|rest| {
+                    rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '(')
+                })
+            })
+    };
+    if !source.lines().any(opens_a_branch) {
         return None;
     }
+    let mut masked = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        if opens_a_branch(line) {
+            for character in line.chars() {
+                masked.push(if character == '\n' || character == '\r' {
+                    character
+                } else {
+                    ' '
+                });
+            }
+        } else {
+            masked.push_str(line);
+        }
+    }
+    Some(masked)
+}
+
+fn mask_attribute_macros(source: &str) -> Option<String> {
     let bytes = source.as_bytes();
     let mut masked = source.to_string();
     let mut blanked = false;

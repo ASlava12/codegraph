@@ -20495,3 +20495,28 @@ fn an_ocaml_file_cannot_import_the_one_that_includes_it() {
         "the file that is included does not import the one that includes it"
     );
 }
+
+#[test]
+fn a_member_of_a_value_is_not_a_static_call() {
+    use crate::resolve::receiver_call_is_universal;
+
+    // A static call names the type first, whatever case the member after
+    // it carries.
+    assert!(receiver_call_is_universal("csharp", "a1.Length.CompareTo"));
+    assert!(receiver_call_is_universal("csharp", "value.ToString"));
+    assert!(receiver_call_is_universal(
+        "csharp",
+        "args.Outcome.Exception.GetType"
+    ));
+    // `JsonConvert.ToString` is Newtonsoft's own, called 720 times.
+    assert!(!receiver_call_is_universal(
+        "csharp",
+        "JsonConvert.ToString"
+    ));
+    assert!(!receiver_call_is_universal(
+        "csharp",
+        "Newtonsoft.Json.JsonConvert.ToString"
+    ));
+    // A name the project declares is still its own.
+    assert!(!receiver_call_is_universal("csharp", "reader.Read"));
+}
