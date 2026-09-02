@@ -17379,3 +17379,46 @@ fn a_value_each_file_binds_is_not_a_duplicate_label() {
         "a value a file hands out is still reachable by name"
     );
 }
+
+#[test]
+fn a_lock_file_declares_nothing_and_a_platform_is_not_a_library() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "composer.json");
+    let lock = graph.add_node(NodeKind::File, "composer.lock");
+    let file = graph.add_node(NodeKind::File, "app/Song.php");
+    // koel's lock pins the whole resolved tree, and nobody chose
+    // `brick/math`; `ext-gd` is a php extension whose functions are
+    // global.
+    let transitive = dependency_node(&mut graph, "brick/math", "composer:brick/math");
+    let extension = dependency_node(&mut graph, "ext-gd", "composer:ext-gd");
+    let unused = dependency_node(&mut graph, "doctrine/dbal", "composer:doctrine/dbal");
+    for (source, target) in [
+        (lock, transitive),
+        (manifest, extension),
+        (manifest, unused),
+    ] {
+        graph.add_edge_with_metadata(
+            source,
+            target,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+    }
+    let import = import_node(&mut graph, "use Monolog\\Logger;", "php");
+    graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let reported = |name: &str| {
+        report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.message.contains(name)
+        })
+    };
+
+    assert!(!reported("brick/math"), "a lock is a resolution");
+    assert!(!reported("ext-gd"), "an extension is not imported");
+    assert!(
+        reported("doctrine/dbal"),
+        "a library the manifest declares and nothing imports is still worth saying"
+    );
+}

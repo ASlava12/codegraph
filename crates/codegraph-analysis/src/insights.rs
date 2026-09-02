@@ -4102,6 +4102,20 @@ pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut V
             .find(|node| node.id == edge.source)
             .map(|node| node.label.as_str())
             .unwrap_or("unknown");
+        // A lock file is not a declaration but a resolution: it names the
+        // whole tree a resolver walked, and nothing in it was chosen by
+        // anyone. koel's `composer.lock` pins `brick/math`,
+        // `doctrine/lexer` and `graham-campbell/result-type`, which no
+        // application imports and no reader should remove.
+        if names_a_lock_file(source) {
+            continue;
+        }
+        // A platform requirement is not a library anyone imports:
+        // `ext-gd` is a php extension whose functions are global, and
+        // `php` itself is the runtime. koel requires six of them.
+        if names_a_platform_requirement(&dependency.label) {
+            continue;
+        }
         insights.push(Insight {
             kind: "unused_declared_dependency".to_string(),
             severity: InsightSeverity::Info,
@@ -6155,6 +6169,27 @@ pub(crate) fn import_matches_package_id(package_id: &str, import: &ImportPackage
         "vcpkg" | "conan" | "cmake" => package == import.package.to_ascii_lowercase(),
         _ => package == import.package,
     }
+}
+
+/// Whether a declared package is the platform rather than a library:
+/// composer states `ext-gd`, `php` and `composer-runtime-api` beside the
+/// packages it installs, and none of the three is ever imported.
+fn names_a_platform_requirement(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("ext-")
+        || name.starts_with("lib-")
+        || matches!(
+            name.as_str(),
+            "php" | "hhvm" | "composer" | "composer-plugin-api" | "composer-runtime-api"
+        )
+}
+
+/// Whether a path names a resolver's lock rather than a manifest someone
+/// wrote: `composer.lock`, `package-lock.json`, `pnpm-lock.yaml`,
+/// `Cargo.lock`, `poetry.lock`, `yarn.lock`.
+fn names_a_lock_file(path: &str) -> bool {
+    let file = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    file.ends_with(".lock") || file.ends_with("-lock.json") || file.ends_with("-lock.yaml")
 }
 
 /// Whether a declared composer package is the library an import names,
