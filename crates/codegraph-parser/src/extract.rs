@@ -2134,6 +2134,8 @@ pub(crate) fn classify_node(
         // one parent, and the first of a list is it.
         let bases = if language == Language::Solidity {
             solidity_base_labels(node, source)
+        } else if language == Language::Go {
+            go_embedded_type_labels(node, source)
         } else {
             base_type_label(language, node, source)
         };
@@ -3147,6 +3149,43 @@ fn ocaml_included_modules(node: Node<'_>, source: &[u8]) -> Option<String> {
 /// `EIP712._hashTypedDataV4` through its *second* base. Recording only the
 /// first found 312 of openzeppelin's 911 inherited calls; recording all of
 /// them finds 409.
+/// The types a Go declaration embeds, which is how it says a method is also
+/// its own: `type Local struct { *Backend }` answers `Backend`'s methods,
+/// and an interface embeds the same way. An embedded field is written as a
+/// type with no name in front of it, which is what tells it from a named
+/// one.
+fn go_embedded_type_labels(node: Node<'_>, source: &[u8]) -> Option<String> {
+    let mut stack = vec![node];
+    let mut names: Vec<String> = Vec::new();
+    while let Some(current) = stack.pop() {
+        match current.kind() {
+            "field_declaration" if current.child_by_field_name("name").is_none() => {
+                if let Some(embedded) = current
+                    .child_by_field_name("type")
+                    .and_then(|type_node| go_type_name(type_node, source))
+                    .filter(|name| !name.is_empty())
+                    && !names.contains(&embedded)
+                {
+                    names.push(embedded);
+                }
+            }
+            // An interface states an embedded one as a type on its own.
+            "type_elem" => {
+                if let Some(embedded) = go_type_name(current, source).filter(|name| {
+                    !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                }) && !names.contains(&embedded)
+                {
+                    names.push(embedded);
+                }
+            }
+            _ => {}
+        }
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    (!names.is_empty()).then(|| names.join(", "))
+}
+
 fn solidity_base_labels(node: Node<'_>, source: &[u8]) -> Option<String> {
     let mut cursor = node.walk();
     let names: Vec<String> = node

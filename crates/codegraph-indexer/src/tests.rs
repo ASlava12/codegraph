@@ -19914,3 +19914,57 @@ fn a_php_property_states_the_type_its_method_belongs_to() {
     );
     assert_ne!(edge.target, handle_of("HandlerWrapper"));
 }
+
+#[test]
+fn a_go_struct_states_the_types_it_embeds() {
+    // `type ApplyCommand struct { Meta }` is how Go says a method of `Meta`
+    // is also its own, and terraform's commands are written that way: 250 of
+    // its types embed another and none of them said so, so `c.Operation`
+    // stood ambiguous between every `Operation` in the repository.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("internal").join("command")).unwrap();
+    fs::write(root.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
+    fs::write(
+        root.join("internal").join("command").join("meta.go"),
+        "package command\n\ntype Meta struct{}\n\nfunc (m *Meta) Operation() string {\n\treturn \"meta\"\n}\n",
+    )
+    .unwrap();
+    // A namesake elsewhere, so the name alone settles nothing.
+    fs::write(
+        root.join("internal").join("command").join("other.go"),
+        "package command\n\ntype Other struct{}\n\nfunc (o *Other) Operation() string {\n\treturn \"other\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("internal").join("command").join("apply.go"),
+        "package command\n\ntype ApplyCommand struct {\n\tMeta\n}\n\nfunc (c *ApplyCommand) Run() string {\n\treturn c.Operation()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let operation_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Operation"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.Operation"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("c.Operation")
+        })
+        .expect("the call through the embedding receiver");
+    assert_eq!(
+        edge.target,
+        operation_of("Meta"),
+        "the type a struct embeds answers for its methods"
+    );
+    assert_ne!(edge.target, operation_of("Other"));
+}
