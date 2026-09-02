@@ -701,6 +701,15 @@ pub(crate) fn add_duplicate_function_insights(graph: &CodeGraph, insights: &mut 
             if owner == Some(label) {
                 continue;
             }
+            // A macro is written once per preprocessor branch, and C has no
+            // owner to tell the branches apart: nlohmann/json states
+            // `JSON_HEDLEY_ASSUME` eighteen times across three files and
+            // means one macro, not eighteen declarations of a name.
+            if shared.iter().all(|node| {
+                node.metadata.get("definition_form").map(String::as_str) == Some("macro")
+            }) {
+                continue;
+            }
             // An overload set is one declaration site: java's `toJson(Object)`
             // beside `toJson(Object, Type)` is not two answers to a name.
             let files: BTreeSet<&str> = shared

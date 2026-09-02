@@ -642,6 +642,9 @@ function buildClientInsights(graph) {
       if (shared.length < 2) return;
       const owner = shared[0].metadata?.owner_type;
       if (owner === label) return;
+      // A macro is written once per preprocessor branch and C has no owner
+      // to tell the branches apart. The CLI skips those too.
+      if (shared.every((node) => node.metadata?.definition_form === "macro")) return;
       const files = new Set(
         shared.map((node) => node.span?.path).filter((path) => typeof path === "string"),
       );
