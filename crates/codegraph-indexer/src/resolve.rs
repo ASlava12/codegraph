@@ -247,6 +247,12 @@ fn csharp_member_of_every_value(method: &str) -> bool {
         method,
         "ToString"
             | "Equals"
+            // Every number, string and date the BCL declares is comparable,
+            // so `d1.CompareTo(d2)` on a `double` and `a1[i].CompareTo(..)`
+            // on a byte are the language's: reading them as
+            // `JValue.CompareTo` put JValue.cs and MiscellaneousUtils.cs in
+            // a cycle neither one makes.
+            | "CompareTo"
             | "GetHashCode"
             | "GetType"
             | "Dispose"
