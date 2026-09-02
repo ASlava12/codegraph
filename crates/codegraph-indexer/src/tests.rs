@@ -20520,3 +20520,73 @@ fn a_member_of_a_value_is_not_a_static_call() {
     // A name the project declares is still its own.
     assert!(!receiver_call_is_universal("csharp", "reader.Read"));
 }
+
+#[test]
+fn a_word_the_spec_runner_provides_is_not_the_projects_own() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("models")).unwrap();
+    fs::create_dir_all(root.join("spec").join("models")).unwrap();
+    // mastodon declares a `context` of its own in `app/models/export.rb`,
+    // and 716 of its spec calls read as a choice between that method and
+    // the word RSpec writes the spec in.
+    fs::write(
+        root.join("app").join("models").join("export.rb"),
+        "class Export\n  def context\n    @context\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("models").join("export_spec.rb"),
+        r#"require 'rails_helper'
+
+def change(model, field)
+  [model, field]
+end
+
+def uses_the_suites_own_change
+  change(Export, :count)
+end
+
+RSpec.describe Export do
+  context 'when exporting' do
+    it 'names the account' do
+      Export.new.context
+    end
+  end
+end
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolutions_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .filter(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .filter_map(|edge| edge.metadata.get("resolution").cloned())
+            .collect::<Vec<_>>()
+    };
+
+    // RSpec hands the spec `context` and `it`, whatever the project
+    // declares under those names -- and a `context` reached through an
+    // object is still the object's.
+    assert!(
+        resolutions_of("context").contains(&"builtin".to_string()),
+        "got {:?}",
+        resolutions_of("context")
+    );
+    assert!(resolutions_of("context").contains(&"resolved".to_string()));
+    assert_eq!(resolutions_of("it"), vec!["builtin".to_string()]);
+    // A suite does declare helpers of its own, and one of those is what
+    // the spec means: koel writes `assertMatchesAgainstRules` 21 times and
+    // declares it under `tests/`.
+    assert_eq!(resolutions_of("change"), vec!["resolved".to_string()]);
+
+    fs::remove_dir_all(root).unwrap();
+}

@@ -3426,6 +3426,35 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
         // The same holds when the receiver never reached the label: a chain
         // reduces `args.into_iter().map` to `map`, and the call is still on
         // a value of the language's own.
+        // A word the suite's runner hands the spec is not one the project
+        // wrote, however many definitions share it: RSpec gives a spec
+        // `to`, `context`, `subject` and `change`, and mastodon declares a
+        // method by each of those names, so 2760 of its spec calls read as
+        // a choice between the framework's word and its own. The list
+        // already answers this where nothing else matched; asking it here
+        // reaches the calls that did find candidates.
+        // Only a word written on its own: `MethodNotImplementedException::method`
+        // names the class that declares it, and koel throws it from three of
+        // its own fakes, while `$instance->assert()` reaches a method of the
+        // object in front of it -- one of koel's own preferences.
+        if !call.label.contains('.')
+            && !call.label.contains("::")
+            && !call.receiver_is_a_value
+            && call.receiver.is_none()
+            && call.receiver_type.is_none()
+            && test_runner_provides_call(&call.language, &call.span.path, &call.label)
+        {
+            // A suite does declare helpers of its own, and one of those is
+            // what the spec means: koel writes `assertMatchesAgainstRules`
+            // 21 times and declares it in `tests/`, while the `context`
+            // that RSpec hands mastodon shares a name with a method in
+            // `app/models/export.rb` and means none of it.
+            language_targets.retain(|target| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.span.as_ref())
+                    .is_some_and(|span| is_test_like_source_path(&span.path))
+            });
+        }
         if receiver_call_is_universal(&call.language, &call.label)
             || (call.receiver_is_a_value
                 && call.language != "ruby"
