@@ -4892,7 +4892,11 @@ fn run_auto_enrichment(
     let report = AutoEnrichmentReport {
         applied: true,
         servers: servers.clone(),
-        semantic_edges: applied.report.added_edges,
+        // `added_edges` counts the calls the pass found that syntax had not
+        // recorded at all, which is nearly none: what the pass does is
+        // upgrade edges that already exist. Reporting that number as the
+        // work done said `0 edges` for a pass that had just settled 68.
+        semantic_edges: applied.report.semantic_edges,
         replaced_edges: applied.report.replaced_edges,
         requested_work_items,
         total_work_items: batch.total_work_items,

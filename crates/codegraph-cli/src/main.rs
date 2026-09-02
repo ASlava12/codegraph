@@ -1214,8 +1214,11 @@ fn report_semantic_pass(report: &AutoEnrichmentReport) {
         report.servers.join(", ")
     };
     eprintln!(
-        "semantic: {} edges from {} of {} candidates ({servers})",
-        report.semantic_edges, report.requested_work_items, report.total_work_items
+        "semantic: {} edges, {} upgraded, from {} of {} candidates ({servers})",
+        report.semantic_edges,
+        report.replaced_edges,
+        report.requested_work_items,
+        report.total_work_items
     );
 }
 
