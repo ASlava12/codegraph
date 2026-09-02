@@ -4440,3 +4440,42 @@ object M {
     // A value that holds no function is still a value.
     assert!(!functions.contains(&"name"), "{functions:?}");
 }
+
+#[test]
+fn reads_a_header_that_guards_its_linkage() {
+    // redis carries 47 headers shaped like this among its dependencies:
+    // the brace opens under one `#ifdef __cplusplus` and closes under
+    // another, so the file will not parse as C at all.
+    let source = br#"
+#ifndef HDR_HISTOGRAM_H
+#define HDR_HISTOGRAM_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int hdr_init(int64_t lowest, int64_t highest) { return 0; }
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+"#;
+    let parsed = parse_source("deps/hdr_histogram/hdr_histogram.h", source, Language::C).unwrap();
+
+    assert_eq!(
+        parsed.first_error_line, None,
+        "the guarded linkage is not a syntax error"
+    );
+    // What the header states is still its own.
+    assert!(
+        parsed.items.iter().any(|item| item.label == "hdr_init"),
+        "{:?}",
+        parsed
+            .items
+            .iter()
+            .map(|item| &item.label)
+            .collect::<Vec<_>>()
+    );
+}

@@ -38,17 +38,22 @@ pub fn parse_source(
     // that stand in front of a declaration blanked, and the second reading
     // is kept only when it holds fewer errors than the first.
     let mut source_text = source_text;
-    let repaired = tree
-        .root_node()
-        .has_error()
-        .then(|| mask_for_a_second_reading(language, source_text))
-        .flatten();
-    if let Some(text) = repaired.as_deref()
-        && let Some(retry) = parser.parse(text, None)
-        && error_node_count(retry.root_node()) < error_node_count(tree.root_node())
-    {
-        tree = retry;
-        source_text = text;
+    let readings = if tree.root_node().has_error() {
+        readings_for_a_second_look(language, source_text)
+    } else {
+        Vec::new()
+    };
+    let mut fewest = error_node_count(tree.root_node());
+    for reading in &readings {
+        let Some(retry) = parser.parse(reading, None) else {
+            continue;
+        };
+        let errors = error_node_count(retry.root_node());
+        if errors < fewest {
+            fewest = errors;
+            tree = retry;
+            source_text = reading;
+        }
     }
     let root = tree.root_node();
     let mut facts = CollectedFacts::default();
@@ -245,11 +250,26 @@ fn mask_macro_namespace_lines(language: Language, source: &str) -> Option<String
 /// where a name in capitals stands in front of another name -- never a
 /// call, never a value, and never a line the preprocessor, a string or a
 /// comment owns, whose text other rules read.
-fn mask_for_a_second_reading(language: Language, source: &str) -> Option<String> {
+fn readings_for_a_second_look(language: Language, source: &str) -> Vec<String> {
     match language {
-        Language::C | Language::Cpp | Language::ObjectiveC => mask_attribute_macros(source),
-        Language::CSharp | Language::Swift => mask_conditional_compilation(source),
-        _ => None,
+        // A header guards its `extern "C" {` with `#ifdef __cplusplus` and
+        // closes it under another one, so the braces sit in different
+        // branches and the file will not parse as C at all: redis carries
+        // 47 such headers in its dependencies. Which of the three readings
+        // helps is the file's own business, and the count of errors says.
+        Language::C | Language::Cpp | Language::ObjectiveC => {
+            let macros = mask_attribute_macros(source);
+            let guards = mask_cplusplus_guards(source);
+            let both = guards
+                .as_deref()
+                .and_then(mask_attribute_macros)
+                .or_else(|| guards.clone());
+            [macros, guards, both].into_iter().flatten().collect()
+        }
+        Language::CSharp | Language::Swift => {
+            mask_conditional_compilation(source).into_iter().collect()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -292,6 +312,53 @@ fn mask_conditional_compilation(source: &str) -> Option<String> {
         }
     }
     Some(masked)
+}
+
+/// A C header opens `extern "C" {` under `#ifdef __cplusplus` and closes
+/// it under a second one, so the braces sit in different branches and the
+/// file will not parse as C at all -- redis carries 47 such headers among
+/// its dependencies. Only the guards that name `__cplusplus` are blanked,
+/// with the `#else` and `#endif` that belong to them: every other branch
+/// is left where it is, since blanking those keeps both arms of a
+/// `#define` and nlohmann/json declares 170 macros that way.
+fn mask_cplusplus_guards(source: &str) -> Option<String> {
+    let opens_a_branch = |line: &str| {
+        let trimmed = line.trim_start();
+        ["#if", "#ifdef", "#ifndef"]
+            .iter()
+            .any(|directive| trimmed.starts_with(directive))
+    };
+    let names_the_language = |line: &str| line.contains("__cplusplus");
+    let mut masked = String::with_capacity(source.len());
+    let mut guarding: Vec<bool> = Vec::new();
+    let mut blanked = false;
+    for line in source.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let mine = if opens_a_branch(trimmed) {
+            let mine = names_the_language(trimmed);
+            guarding.push(mine);
+            mine
+        } else if trimmed.starts_with("#endif") {
+            guarding.pop().unwrap_or(false)
+        } else if trimmed.starts_with("#else") || trimmed.starts_with("#elif") {
+            guarding.last().copied().unwrap_or(false)
+        } else {
+            false
+        };
+        if mine {
+            for character in line.chars() {
+                masked.push(if character == '\n' || character == '\r' {
+                    character
+                } else {
+                    ' '
+                });
+            }
+            blanked = true;
+        } else {
+            masked.push_str(line);
+        }
+    }
+    blanked.then_some(masked)
 }
 
 fn mask_attribute_macros(source: &str) -> Option<String> {
