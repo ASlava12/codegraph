@@ -103,6 +103,26 @@ pub fn is_shipped_but_not_written(path: &str) -> bool {
 }
 
 pub fn is_test_like_source_path(path: &str) -> bool {
+    // The same paths are asked about over and over -- once per node, per
+    // edge and per candidate -- and the answer costs two allocations for
+    // the path and one per segment. terraform's insights spent a third of
+    // their time here. A graph holds thousands of distinct paths, so the
+    // answers are kept.
+    thread_local! {
+        static ANSWERS: std::cell::RefCell<std::collections::HashMap<String, bool>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    if let Some(answer) = ANSWERS.with(|answers| answers.borrow().get(path).copied()) {
+        return answer;
+    }
+    let answer = test_like_source_path(path);
+    ANSWERS.with(|answers| {
+        answers.borrow_mut().insert(path.to_string(), answer);
+    });
+    answer
+}
+
+fn test_like_source_path(path: &str) -> bool {
     let normalized_original = path.replace('\\', "/");
     let normalized = normalized_original.to_ascii_lowercase();
     let file_name = normalized.rsplit('/').next().unwrap_or(normalized.as_str());

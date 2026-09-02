@@ -571,11 +571,16 @@ pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
         components.entry(community_id).or_default().insert(node.id);
     }
 
+    // The areas a project is laid out in are the same for every community,
+    // and reading them off the graph per community was 5223 of the 6379
+    // samples a profile of terraform's report took -- eight minutes of it.
+    let project = ProjectAreas::from_graph(graph);
     let mut communities: Vec<_> = components
         .into_iter()
         .map(|(community_id, component)| {
             graph_community(
                 graph,
+                &project,
                 &nodes_by_id,
                 &node_community,
                 community_id,
@@ -638,6 +643,7 @@ pub fn communities(graph: &CodeGraph, limit: usize) -> CommunityReport {
 
 pub(crate) fn graph_community(
     graph: &CodeGraph,
+    project: &ProjectAreas,
     nodes_by_id: &BTreeMap<NodeId, &Node>,
     node_community: &BTreeMap<NodeId, String>,
     community_id: String,
@@ -648,7 +654,6 @@ pub(crate) fn graph_community(
     let mut languages = BTreeMap::new();
     let mut node_kinds = BTreeMap::new();
     let mut area_counts: BTreeMap<String, usize> = BTreeMap::new();
-    let project = ProjectAreas::from_graph(graph);
     let mut nodes: Vec<Node> = component
         .iter()
         .filter_map(|id| nodes_by_id.get(id).map(|node| (*node).clone()))

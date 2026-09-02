@@ -667,7 +667,31 @@ pub(crate) fn entrypoint_reachable_nodes_from(
     reachable
 }
 
-pub(crate) fn is_source_file_candidate(graph: &CodeGraph, node: &Node) -> bool {
+/// What each file contains, as the edge that says so and the node it
+/// points at. Reading this off the edge list per file is a pass over every
+/// edge and, for each hit, a pass over every node: terraform has 255366
+/// edges, 132813 nodes and 5265 files, and its report took eight minutes.
+pub(crate) type ContainedByFile = BTreeMap<NodeId, Vec<(usize, NodeId)>>;
+
+pub(crate) fn contained_by_file(graph: &CodeGraph) -> ContainedByFile {
+    let mut contained: ContainedByFile = BTreeMap::new();
+    for (index, edge) in graph.edges.iter().enumerate() {
+        if edge.kind == EdgeKind::Contains {
+            contained
+                .entry(edge.source)
+                .or_default()
+                .push((index, edge.target));
+        }
+    }
+    contained
+}
+
+pub(crate) fn is_source_file_candidate(
+    graph: &CodeGraph,
+    contained: &ContainedByFile,
+    node: &Node,
+) -> bool {
+    let _ = graph;
     node.kind == NodeKind::File
         && node.metadata.contains_key("language")
         // A document is not code, and its headings are not symbols the
@@ -680,37 +704,37 @@ pub(crate) fn is_source_file_candidate(graph: &CodeGraph, node: &Node) -> bool {
             .is_none_or(|kind| kind != "document")
         && !node.metadata.contains_key("skipped_reason")
         && !is_test_like_source_path(&node.label)
-        && graph.edges.iter().any(|edge| {
-            edge.source == node.id
-                && edge.kind == EdgeKind::Contains
-                && graph
-                    .nodes
-                    .iter()
-                    .any(|child| child.id == edge.target && is_code_symbol(&child.kind))
-        })
+        && contained
+            .get(&node.id)
+            .is_some_and(|children| {
+                children.iter().any(|(_, child)| {
+                    graph
+                        .nodes
+                        .get(child.0.saturating_sub(1) as usize)
+                        .filter(|node| node.id == *child)
+                        .is_some_and(|node| is_code_symbol(&node.kind))
+                })
+            })
 }
 
 pub(crate) fn file_has_reachable_code(
-    graph: &CodeGraph,
+    contained: &ContainedByFile,
     file_id: NodeId,
     reachable: &BTreeSet<NodeId>,
 ) -> bool {
-    graph.edges.iter().any(|edge| {
-        edge.source == file_id
-            && edge.kind == EdgeKind::Contains
-            && reachable.contains(&edge.target)
-    })
+    contained
+        .get(&file_id)
+        .is_some_and(|children| children.iter().any(|(_, child)| reachable.contains(child)))
 }
 
-pub(crate) fn contained_code_edge_indexes(graph: &CodeGraph, file_id: NodeId) -> Vec<usize> {
-    graph
-        .edges
-        .iter()
-        .enumerate()
-        .filter_map(|(index, edge)| {
-            (edge.source == file_id && edge.kind == EdgeKind::Contains).then_some(index)
-        })
-        .collect()
+pub(crate) fn contained_code_edge_indexes(
+    contained: &ContainedByFile,
+    file_id: NodeId,
+) -> Vec<usize> {
+    contained
+        .get(&file_id)
+        .map(|children| children.iter().map(|(index, _)| *index).collect())
+        .unwrap_or_default()
 }
 
 pub(crate) fn is_code_symbol(kind: &NodeKind) -> bool {

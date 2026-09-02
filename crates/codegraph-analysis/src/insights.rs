@@ -2811,12 +2811,18 @@ pub(crate) fn add_unreachable_error_flow_insights(
 }
 
 /// How many of a file's functions it offers outwards.
-fn exported_function_count(graph: &CodeGraph, file: NodeId) -> usize {
-    graph
-        .edges
+fn exported_function_count(graph: &CodeGraph, contained: &ContainedByFile, file: NodeId) -> usize {
+    contained
+        .get(&file)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
         .iter()
-        .filter(|edge| edge.kind == EdgeKind::Contains && edge.source == file)
-        .filter_map(|edge| graph.nodes.iter().find(|node| node.id == edge.target))
+        .filter_map(|(_, child)| {
+            graph
+                .nodes
+                .get(child.0.saturating_sub(1) as usize)
+                .filter(|node| node.id == *child)
+        })
         .filter(|node| {
             node.kind == NodeKind::Function
                 && node
@@ -2836,12 +2842,13 @@ pub(crate) fn add_unreachable_source_file_insights(
         return;
     }
 
+    let contained = contained_by_file(graph);
     let source_files = graph
         .nodes
         .iter()
-        .filter(|node| is_source_file_candidate(graph, node));
+        .filter(|node| is_source_file_candidate(graph, &contained, node));
     for file in source_files {
-        if reachable.contains(&file.id) || file_has_reachable_code(graph, file.id, reachable) {
+        if reachable.contains(&file.id) || file_has_reachable_code(&contained, file.id, reachable) {
             continue;
         }
 
@@ -2854,7 +2861,7 @@ pub(crate) fn add_unreachable_source_file_insights(
         // API: 129 of okio's 176, 383 of terraform's 500. Saying how many
         // of its functions are exported is the difference between "dead"
         // and "reached from outside".
-        let exported = exported_function_count(graph, file.id);
+        let exported = exported_function_count(graph, &contained, file.id);
         let offered = match exported {
             0 => String::new(),
             1 => "; one of its functions is exported, so callers may be outside this repository"
@@ -2871,7 +2878,7 @@ pub(crate) fn add_unreachable_source_file_insights(
                 file.label
             ),
             nodes: vec![file.id],
-            edges: contained_code_edge_indexes(graph, file.id),
+            edges: contained_code_edge_indexes(&contained, file.id),
         });
     }
 }

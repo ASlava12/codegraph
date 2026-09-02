@@ -1562,14 +1562,15 @@ pub(crate) fn query_unreachable(
             scope,
         ));
     }
+    let contained = contained_by_file(graph);
     let mut matched: Vec<&Node> = graph
         .nodes
         .iter()
         .filter(|node| {
             if scope == UnreachableScope::SourceFiles {
-                is_source_file_candidate(graph, node)
+                is_source_file_candidate(graph, &contained, node)
                     && !reachable.contains(&node.id)
-                    && !file_has_reachable_code(graph, node.id, &reachable)
+                    && !file_has_reachable_code(&contained, node.id, &reachable)
             } else {
                 node.id != graph.root && !reachable.contains(&node.id)
             }
