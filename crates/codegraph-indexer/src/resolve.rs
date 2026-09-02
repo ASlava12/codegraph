@@ -4002,19 +4002,11 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     let Some(node) = graph_node(&context.graph, *target) else {
                         return false;
                     };
-                    // An extension method is reached through the type it
-                    // extends, which is not the class that declares it:
-                    // `cancellationToken.ThrowIfCancelled()` is
-                    // `AsyncUtils`'s and names `CancellationToken`.
-                    let named_by_the_receiver = node
+                    if node
                         .metadata
                         .get("owner_type")
-                        .is_some_and(|declared| declared == owner)
-                        || node
-                            .metadata
-                            .get("reached_through")
-                            .is_some_and(|extended| extended == owner);
-                    if !named_by_the_receiver {
+                        .is_none_or(|declared| declared != owner)
+                    {
                         return false;
                     }
                     package_candidates.as_deref().is_none_or(|candidates| {
@@ -4026,6 +4018,26 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                     })
                 })
                 .collect::<Vec<_>>();
+            // An extension method is reached through the type it extends,
+            // which is not the class that declares it:
+            // `cancellationToken.ThrowIfCancelled()` is `AsyncUtils`' and
+            // names `CancellationToken`. A method the type itself declares
+            // wins over one declared for it, which is what both C# and
+            // Kotlin do -- okio declares `Buffer.write` and an extension of
+            // the same name, and reading them as one choice cost 79 answers.
+            let owned = if owned.is_empty() {
+                targets
+                    .iter()
+                    .copied()
+                    .filter(|target| {
+                        graph_node(&context.graph, *target)
+                            .and_then(|node| node.metadata.get("reached_through"))
+                            .is_some_and(|extended| extended == owner)
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                owned
+            };
             if !owned.is_empty() {
                 basis = "receiver_type";
                 targets = owned;

@@ -20073,3 +20073,51 @@ fn a_csharp_extension_is_reached_through_the_type_it_extends() {
     );
     assert_ne!(edge.target, declared_by("Other"));
 }
+
+#[test]
+fn a_kotlin_extension_is_reached_through_its_receiver() {
+    // `fun Buffer.asAscii(): String` writes the type in front of the name,
+    // and okio declares 408 functions that way. A method the type itself
+    // declares still wins over one declared for it, which is what Kotlin
+    // does -- reading them as one choice cost okio 79 answers.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("buffer.kt"),
+        "package okio\n\nclass Buffer {\n    fun size(): Int = 0\n}\n\nfun Buffer.asAscii(): String = \"x\"\n",
+    )
+    .unwrap();
+    // A namesake declared as a method, so the name alone settles nothing.
+    fs::write(
+        root.join("src").join("other.kt"),
+        "package okio\n\nclass Other {\n    fun asAscii(): String = \"\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("user.kt"),
+        "package okio\n\nclass User {\n    fun run(b: Buffer): String = b.asAscii()\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let extension = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label == "asAscii"
+                && node.metadata.get("reached_through").map(String::as_str) == Some("Buffer")
+        })
+        .expect("the extension states the type it is reached through");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("asAscii")
+        })
+        .expect("the call through the receiver");
+    assert_eq!(
+        edge.target, extension.id,
+        "the receiver's type reaches the extension declared for it"
+    );
+}

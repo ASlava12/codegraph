@@ -4731,20 +4731,21 @@ fn extended_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Opt
                 .and_then(|stated| csharp_type_name(stated, source))
         }
         Language::Kotlin => {
+            // `fun Buffer.asAscii(): String` writes the receiver in front of
+            // the name, so it is the type that sits before it.
+            let name = node.child_by_field_name("name")?;
             let mut cursor = node.walk();
             let receiver = node
                 .named_children(&mut cursor)
-                .find(|child| child.kind() == "receiver_type")?;
-            let mut inner = receiver.walk();
-            receiver
-                .named_children(&mut inner)
-                .find_map(|child| match child.kind() {
-                    "user_type" | "type_identifier" | "simple_identifier" => {
-                        kotlin_stated_type_name(child, source)
-                    }
-                    _ => None,
+                .take_while(|child| child.start_byte() < name.start_byte())
+                .filter(|child| {
+                    matches!(
+                        child.kind(),
+                        "receiver_type" | "user_type" | "type_identifier" | "nullable_type"
+                    )
                 })
-                .or_else(|| kotlin_stated_type_name(receiver, source))
+                .last()?;
+            kotlin_stated_type_name(receiver, source)
         }
         _ => None,
     }
