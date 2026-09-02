@@ -20121,3 +20121,49 @@ fn a_kotlin_extension_is_reached_through_its_receiver() {
         "the receiver's type reaches the extension declared for it"
     );
 }
+
+#[test]
+fn a_csharp_base_call_means_the_class_it_extends() {
+    // `base.Close()` inside `Close()` is the parent's implementation and
+    // never this one; the rule knew `super` and not the word C# uses, so
+    // 130 of Newtonsoft.Json's calls were a definition calling itself.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("src").join("JsonReader.cs"),
+        "namespace App;\n\npublic class JsonReader\n{\n    public virtual void Close() { }\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src").join("BsonReader.cs"),
+        "namespace App;\n\npublic class BsonReader : JsonReader\n{\n    public override void Close()\n    {\n        base.Close();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let close_of = |owner: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|node| {
+                node.label == "Close"
+                    && node.metadata.get("owner_type").map(String::as_str) == Some(owner)
+            })
+            .unwrap_or_else(|| panic!("{owner}.Close"))
+            .id
+    };
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("base.Close")
+        })
+        .expect("the call through base");
+    assert_eq!(
+        edge.target,
+        close_of("JsonReader"),
+        "base names the class the caller extends"
+    );
+    assert_ne!(edge.target, close_of("BsonReader"));
+}

@@ -3459,12 +3459,16 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             }
             narrowed_to_the_module = language_targets.len() < before;
         }
-        // `super.x` written inside `x` means the parent's implementation and
-        // never this one. It has to be settled before the same-file
+        // `super.x` -- `base.x` in C# -- written inside `x` means the
+        // parent's implementation and never this one. It has to be settled before the same-file
         // preference below, which would otherwise answer with the caller's
         // own `x` sitting in the same file -- openzeppelin wrote 174 calls
         // from a definition to itself that way.
-        if let Some(("super", method)) = split_qualified_call(&call.label) {
+        // `base` is the word C# uses; everywhere else it is a name a
+        // program may bind to anything, and oscar and zod both do.
+        if let Some((qualifier, method)) = split_qualified_call(&call.label)
+            && (qualifier == "super" || (qualifier == "base" && call.language == "csharp"))
+        {
             let inherited: Vec<String> = graph_node(&context.graph, call.caller)
                 .and_then(|node| node.metadata.get("owner_type").cloned())
                 .map(|owner| ancestor_type_names(&context.graph, &owner))
