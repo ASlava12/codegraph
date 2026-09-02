@@ -95,6 +95,36 @@ fn node_reference(node: &Node) -> String {
         .unwrap_or_else(|| node.id.to_string())
 }
 
+/// A unix second as the date and time it names, in UTC: `1788321694` is
+/// `2026-09-02T21:21:34Z`. The civil date comes from the days since the
+/// epoch by Howard Hinnant's algorithm, which needs no calendar table.
+pub(crate) fn utc_timestamp(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64;
+    let seconds_of_day = seconds % 86_400;
+    // Shift the era so that a year starts in March and the leap day is last.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    } as u32;
+    let year = year + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        seconds_of_day / 3_600,
+        (seconds_of_day % 3_600) / 60,
+        seconds_of_day % 60
+    )
+}
+
 pub fn project_report_markdown(
     report: &ProjectReport,
     options: &ProjectReportMarkdownOptions,
@@ -106,7 +136,14 @@ pub fn project_report_markdown(
         writeln!(output, "- Root: `{}`", markdown_code(root)).unwrap();
     }
     if let Some(generated_at_unix) = options.generated_at_unix {
-        writeln!(output, "- Generated at unix: `{generated_at_unix}`").unwrap();
+        // A reader of a report cannot read 1788321694. The number stays for
+        // whatever reads the line after them.
+        writeln!(
+            output,
+            "- Generated at: `{}` (unix `{generated_at_unix}`)",
+            utc_timestamp(generated_at_unix)
+        )
+        .unwrap();
     }
     writeln!(
         output,
@@ -1209,5 +1246,22 @@ pub(crate) fn format_backtick_list<'a>(
         format!("{remaining} more")
     } else {
         format!("{rendered}, and {remaining} more")
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::utc_timestamp;
+
+    #[test]
+    fn a_unix_second_is_the_date_it_names() {
+        // Checked against `date -u -r`: the epoch, a leap day in a year that
+        // is a leap year only because 400 divides it, and the second this
+        // line was written.
+        assert_eq!(utc_timestamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_timestamp(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(utc_timestamp(1_788_322_309), "2026-09-02T04:11:49Z");
+        // A year that is not a leap year, the day after February.
+        assert_eq!(utc_timestamp(1_677_628_800), "2023-03-01T00:00:00Z");
     }
 }
