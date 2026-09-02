@@ -794,6 +794,15 @@ pub(crate) fn index_file(
         metadata.insert("written_by".to_string(), "generator".to_string());
     }
 
+    // A Lua module hands out names another module declares, and the call
+    // sites write this file's name for them.
+    if label.ends_with(".lua")
+        && let Some(source) = source_bytes.as_deref()
+        && let Some(re_exports) = lua_module_re_exports(source)
+    {
+        metadata.insert("re_exports".to_string(), re_exports);
+    }
+
     let adapter = source_bytes
         .as_deref()
         .and_then(|source| parsing_adapter(path, source))

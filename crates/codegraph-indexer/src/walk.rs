@@ -243,6 +243,78 @@ pub(crate) fn is_probably_source_file(path: &Path, max_file_size: u64) -> bool {
 /// gqlgen's 865 go files carry a banner and hold 14363 of its 18653
 /// functions. Nothing but a person's own code should be counted as the
 /// program's, and the generator says so itself in its first lines.
+/// What a Lua module hands out under a name that another module declares.
+/// `spec/helpers.lua` binds `local cmd = reload_module("spec.internal.cmd")`
+/// and returns a table of `start_kong = cmd.start_kong`: the name the
+/// callers write is this file's, and the definition is that one's. kong
+/// writes 103 such fields and 689 of its calls could not choose between the
+/// spec files that declare the same names locally.
+///
+/// The binding is any call with a single string argument that names a
+/// module -- `require` is the language's, and a project may wrap it, as
+/// kong does.
+pub fn lua_module_re_exports(source: &[u8]) -> Option<String> {
+    let source = std::str::from_utf8(source).ok()?;
+    let mut bound: std::collections::BTreeMap<&str, &str> = std::collections::BTreeMap::new();
+    for line in source.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("local ") else {
+            continue;
+        };
+        let Some((name, value)) = rest.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        let value = value.trim();
+        let Some(open) = value.find(['(', '"', '\'']) else {
+            continue;
+        };
+        let after = &value[open..];
+        let quoted = after
+            .trim_start_matches('(')
+            .trim_start()
+            .strip_prefix(['"', '\''])?;
+        let end = quoted.find(['"', '\''])?;
+        let module = &quoted[..end];
+        if module.is_empty()
+            || !module
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '/')
+        {
+            continue;
+        }
+        bound.insert(name, module);
+    }
+    if bound.is_empty() {
+        return None;
+    }
+    let mut re_exports: Vec<String> = Vec::new();
+    for line in source.lines() {
+        let line = line.trim().trim_end_matches(',');
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim().rsplit('.').next().unwrap_or("").trim();
+        let value = value.trim();
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        let Some((holder, field)) = value.split_once('.') else {
+            continue;
+        };
+        if field != name || !field.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            continue;
+        }
+        if let Some(module) = bound.get(holder.trim()) {
+            re_exports.push(format!("{name}>{module}"));
+        }
+    }
+    (!re_exports.is_empty()).then(|| re_exports.join(";"))
+}
+
 pub fn generator_banner(source: &[u8]) -> bool {
     const BANNERS: [&str; 6] = [
         "do not edit",

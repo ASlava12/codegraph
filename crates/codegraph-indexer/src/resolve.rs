@@ -3028,6 +3028,19 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     // Asked once per call and per candidate, so it is read off the node
     // list once rather than three times per question.
     let type_names = type_nodes_by_name(&context.graph);
+    // What a module hands out under a name another module declares. Only a
+    // file that states one is kept.
+    let re_exports: BTreeMap<String, String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::File)
+        .filter_map(|node| {
+            node.metadata
+                .get("re_exports")
+                .map(|list| (node.label.clone(), list.clone()))
+        })
+        .collect();
     let pending_calls = std::mem::take(&mut context.pending_calls);
     // What the scan holds does not change while calls are resolved, so each
     // candidate path is looked for once.
@@ -3873,10 +3886,47 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                             })
                     })
                     .collect::<Vec<_>>();
+                // The module may hand the name out from another rather than
+                // declare it: `spec/helpers.lua` binds `local cmd =
+                // reload_module("spec.internal.cmd")` and returns
+                // `start_kong = cmd.start_kong`, and 689 of kong's calls
+                // stood between the spec files that declare that name
+                // locally.
+                let handed_out: Vec<String> = if in_module.is_empty() {
+                    let method = call.label.rsplit(['.', ':']).next().unwrap_or("");
+                    candidates
+                        .iter()
+                        .filter_map(|candidate| re_exports.get(candidate))
+                        .flat_map(|list| list.split(';'))
+                        .filter_map(|entry| entry.split_once('>'))
+                        .filter(|(name, _)| *name == method)
+                        .map(|(_, module)| format!("{}.lua", module.replace('.', "/")))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let from_another_module = if handed_out.is_empty() {
+                    Vec::new()
+                } else {
+                    language_targets
+                        .iter()
+                        .copied()
+                        .filter(|target| {
+                            graph_node(&context.graph, *target)
+                                .and_then(|node| node.span.as_ref())
+                                .is_some_and(|span| {
+                                    handed_out.iter().any(|path| span.path.ends_with(path))
+                                })
+                        })
+                        .collect::<Vec<_>>()
+                };
                 // Narrow only when the import actually names something the
                 // scan found: an import whose module was never scanned must
                 // not erase the candidates matched by name.
-                if in_module.is_empty() {
+                if !from_another_module.is_empty() {
+                    basis = "module_re_export";
+                    from_another_module
+                } else if in_module.is_empty() {
                     language_targets
                 } else {
                     basis = "import";

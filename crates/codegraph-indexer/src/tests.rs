@@ -20347,3 +20347,63 @@ fn a_pattern_named_inside_a_string_is_not_a_call() {
         "a pattern named inside a string is not a call"
     );
 }
+
+#[test]
+fn a_lua_module_hands_out_what_another_declares() {
+    // `spec/helpers.lua` binds `local cmd = reload_module("spec.internal.cmd")`
+    // and returns `start_kong = cmd.start_kong`: the callers write this
+    // module's name and the definition is the other's. 689 of kong's calls
+    // stood between the spec files that declare the same names locally.
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("spec").join("internal")).unwrap();
+    fs::write(
+        root.join("spec").join("internal").join("cmd.lua"),
+        "local M = {}\n\nfunction M.start_kong(conf)\n  return conf\nend\n\nreturn M\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("helpers.lua"),
+        "local cmd = require(\"spec.internal.cmd\")\n\nreturn {\n  start_kong = cmd.start_kong,\n}\n",
+    )
+    .unwrap();
+    // A local of the same name, so the name alone settles nothing.
+    fs::write(
+        root.join("spec").join("other_spec.lua"),
+        "local function start_kong(conf)\n  return conf\nend\n\nreturn start_kong\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("spec").join("use_spec.lua"),
+        "local helpers = require(\"spec.helpers\")\n\nlocal function run()\n  return helpers.start_kong({})\nend\n\nreturn run\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let declared = graph
+        .nodes
+        .iter()
+        .find(|node| {
+            node.label.ends_with("start_kong")
+                && node
+                    .span
+                    .as_ref()
+                    .is_some_and(|span| span.path.ends_with("internal/cmd.lua"))
+        })
+        .expect("the module that declares it");
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.kind == EdgeKind::Calls
+                && edge.metadata.get("call_label").map(String::as_str) == Some("helpers.start_kong")
+        })
+        .expect("the call through the module that hands it out");
+    assert_eq!(
+        edge.target, declared.id,
+        "the call reaches the module the name is handed out from"
+    );
+    assert_eq!(
+        edge.metadata.get("resolution_basis").map(String::as_str),
+        Some("module_re_export")
+    );
+}
