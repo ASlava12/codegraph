@@ -253,6 +253,48 @@ pub(crate) fn is_probably_source_file(path: &Path, max_file_size: u64) -> bool {
 /// The binding is any call with a single string argument that names a
 /// module -- `require` is the language's, and a project may wrap it, as
 /// kong does.
+/// The standard-library names a Lua file replaces. `_G.math.randomseed =
+/// function() .. end` in kong's `globalpatches.lua` makes every
+/// `math.randomseed()` in the project that function, and nothing else in
+/// the graph would say so.
+pub fn lua_patched_standard_names(source: &[u8]) -> Option<String> {
+    let source = std::str::from_utf8(source).ok()?;
+    let mut patched: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for line in source.lines() {
+        let line = line.trim();
+        if line.starts_with("--") {
+            continue;
+        }
+        let line = line.strip_prefix("_G.").unwrap_or(line);
+        let Some((target, value)) = line.split_once('=') else {
+            continue;
+        };
+        // `==`, `<=` and their kind compare rather than assign.
+        if value.starts_with('=') || target.ends_with(['=', '<', '>', '~', '!']) {
+            continue;
+        }
+        let target = target.trim();
+        let Some((module, name)) = target.split_once('.') else {
+            continue;
+        };
+        if !matches!(
+            module,
+            "table" | "string" | "math" | "io" | "os" | "coroutine" | "debug" | "utf8" | "package"
+        ) {
+            continue;
+        }
+        if !name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+            || name.is_empty()
+        {
+            continue;
+        }
+        patched.insert(target);
+    }
+    (!patched.is_empty()).then(|| patched.into_iter().collect::<Vec<_>>().join(","))
+}
+
 pub fn lua_module_re_exports(source: &[u8]) -> Option<String> {
     let source = std::str::from_utf8(source).ok()?;
     let mut bound: std::collections::BTreeMap<&str, &str> = std::collections::BTreeMap::new();

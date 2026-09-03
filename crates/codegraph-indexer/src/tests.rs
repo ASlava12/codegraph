@@ -20774,3 +20774,53 @@ fn a_file_the_framework_loads_at_boot_is_an_entrypoint() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_standard_lua_name_is_the_languages_unless_the_project_replaces_it() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("kong").join("tools")).unwrap();
+    // kong declares an `insert` of its own and writes 143 `table.insert`
+    // calls that mean the language's.
+    fs::write(
+        root.join("kong").join("tools").join("table.lua"),
+        "local M = {}\n\nfunction M.insert(t, v)\n  return v\nend\n\nreturn M\n",
+    )
+    .unwrap();
+    // ...and it replaces `math.randomseed`, so that one is its own.
+    fs::write(
+        root.join("kong").join("globalpatches.lua"),
+        "_G.math.randomseed = function()\n  return 1\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("kong").join("init.lua"),
+        "local t = {}\ntable.insert(t, 1)\nmath.randomseed()\nstring.format(\"%s\", 1)\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    assert_eq!(resolution_of("table.insert"), "builtin");
+    assert_eq!(resolution_of("string.format"), "builtin");
+    assert_eq!(
+        resolution_of("math.randomseed"),
+        "resolved",
+        "a name the project replaces is the project's"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

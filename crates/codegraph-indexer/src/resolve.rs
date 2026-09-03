@@ -1142,6 +1142,15 @@ fn standard_library_module_call(language: &str, label: &str) -> bool {
                 | "Uchar"
                 | "Weak"
         ),
+        // Lua's `table`, `string`, `math` and their kind are global tables
+        // the language provides. A project module of the same name is
+        // required under a name of its own -- kong's
+        // `kong/tools/table.lua` is `require("kong.tools.table")` -- so
+        // the global is what a qualified call means.
+        "lua" => matches!(
+            module,
+            "table" | "string" | "math" | "io" | "os" | "coroutine" | "debug" | "utf8" | "package"
+        ),
         // Julia's `Base` and `Core` are open in every module, and nothing
         // outside the language declares them.
         "julia" => matches!(module, "Base" | "Core"),
@@ -3082,6 +3091,18 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     // Asked once per call and per candidate, so it is read off the node
     // list once rather than three times per question.
     let type_names = type_nodes_by_name(&context.graph);
+    // The standard-library names this project replaces, from the files
+    // that replace them: kong patches `math.randomseed` and calls it ten
+    // times, and that call is the project's own.
+    let patched_standard_names: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.metadata.get("patches_standard_names"))
+        .flat_map(|names| names.split(','))
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect();
     // What a module hands out under a name another module declares. Only a
     // file that states one is kept.
     let re_exports: BTreeMap<String, String> = context
@@ -3463,6 +3484,25 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             call.receiver_call.as_deref().is_some_and(|handed_back| {
                 test_runner_provides_call(&call.language, &call.span.path, handed_back)
             });
+        // A name the language provides is not a choice between the
+        // project's declarations: kong writes 143 `table.insert` calls and
+        // declares an `insert` of its own, and the two are unrelated. A
+        // name the project replaces is the exception it states itself.
+        if call.language == "lua"
+            && standard_library_module_call(&call.language, &call.label)
+            && !patched_standard_names.contains(call.label.as_str())
+            && !context
+                .file_import_qualifiers
+                .get(call.span.path.as_str())
+                .is_some_and(|qualifiers| {
+                    call.label
+                        .split_once('.')
+                        .is_some_and(|(module, _)| qualifiers.contains_key(module))
+                })
+        {
+            add_external_call_placeholder(context, call, "builtin");
+            continue;
+        }
         if !call.label.contains('.')
             && !call.label.contains("::")
             && (written_on_what_the_runner_handed_back

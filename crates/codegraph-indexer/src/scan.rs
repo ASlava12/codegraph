@@ -803,6 +803,16 @@ pub(crate) fn index_file(
         metadata.insert("re_exports".to_string(), re_exports);
     }
 
+    // A Lua file may replace a name the language provides, and then that
+    // name is the project's: kong patches `math.randomseed` in
+    // `globalpatches.lua` and calls it 10 times.
+    if label.ends_with(".lua")
+        && let Some(source) = source_bytes.as_deref()
+        && let Some(patched) = lua_patched_standard_names(source)
+    {
+        metadata.insert("patches_standard_names".to_string(), patched);
+    }
+
     let adapter = source_bytes
         .as_deref()
         .and_then(|source| parsing_adapter(path, source))
