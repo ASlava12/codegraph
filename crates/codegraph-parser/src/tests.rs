@@ -4548,3 +4548,33 @@ export { Named as Modal };
     // What the file keeps to itself is still its own.
     assert_eq!(visibility("helper").as_deref(), Some("private"));
 }
+
+#[test]
+fn a_file_that_is_not_utf8_is_still_source() {
+    // redis vendors a lua test whose comments are latin-1, and the whole
+    // file was read as nothing: 19 functions and 89 control-flow facts.
+    let mut source =
+        b"-- comment with a byte: \xe9\nlocal function delay(n)\n  return n\nend\n".to_vec();
+    source.push(b'\n');
+    let parsed = parse_source("deps/lua/test/life.lua", &source, Language::Lua).unwrap();
+
+    assert!(
+        parsed
+            .items
+            .iter()
+            .any(|item| item.label == "delay" && item.kind == ParsedItemKind::Function),
+        "{:?}",
+        parsed
+            .items
+            .iter()
+            .map(|item| &item.label)
+            .collect::<Vec<_>>()
+    );
+    // One byte in, one byte out: the span means the same thing after.
+    let delay = parsed
+        .items
+        .iter()
+        .find(|item| item.label == "delay")
+        .unwrap();
+    assert_eq!(delay.span.start_line, 2);
+}

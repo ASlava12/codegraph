@@ -15,7 +15,19 @@ pub fn parse_source(
     language: Language,
 ) -> Result<ParsedFile, ParseError> {
     let path = path.as_ref();
-    let source_text = std::str::from_utf8(source).map_err(|_| ParseError::InvalidUtf8)?;
+    // A byte that is not utf-8 is still a byte of source, and the rest of
+    // the file is ordinary code: redis vendors a lua test and a c test
+    // whose comments are latin-1, and both were read as nothing at all.
+    // Each such byte becomes a space, so every offset after it stays where
+    // it was and a span still points at the same text.
+    let readable;
+    let source_text = match std::str::from_utf8(source) {
+        Ok(text) => text,
+        Err(_) => {
+            readable = source_read_as_utf8(source);
+            readable.as_str()
+        }
+    };
     let mut parser = Parser::new();
     parser
         .set_language(&language.tree_sitter_language())
@@ -515,6 +527,30 @@ fn error_node_count(node: Node<'_>) -> usize {
     }
     let mut cursor = node.walk();
     node.children(&mut cursor).map(error_node_count).sum()
+}
+
+/// The file read as utf-8, with every byte that is not replaced by a
+/// space. One byte in, one byte out: a span means the same thing after.
+fn source_read_as_utf8(source: &[u8]) -> String {
+    let mut readable = String::with_capacity(source.len());
+    let mut rest = source;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                readable.push_str(text);
+                return readable;
+            }
+            Err(error) => {
+                let (good, bad) = rest.split_at(error.valid_up_to());
+                readable.push_str(std::str::from_utf8(good).unwrap_or_default());
+                let skipped = error.error_len().unwrap_or(bad.len()).max(1);
+                for _ in 0..skipped.min(bad.len()) {
+                    readable.push(' ');
+                }
+                rest = &bad[skipped.min(bad.len())..];
+            }
+        }
+    }
 }
 
 /// The 1-based line of the first error or missing node in the tree. Only
