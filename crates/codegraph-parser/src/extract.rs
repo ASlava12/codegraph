@@ -4432,6 +4432,14 @@ pub(crate) fn declared_variable_types(
     if language == Language::Java {
         return java_declared_variable_types(node, source);
     }
+    // Rust states a parameter's type always -- `fn parse(&self, adapter:
+    // &dyn LanguageAdapter)` -- and this repository's own
+    // `adapter.parse(..)` was read as `str::parse` because nothing said
+    // what `adapter` is. 3328 rust calls through a named receiver are
+    // unsettled across ripgrep, serde and codegraph itself.
+    if language == Language::Rust {
+        return rust_declared_variable_types(node, source);
+    }
     // Kotlin states the type of a parameter always and of a binding often:
     // `fun write(sink: BufferedSink)` and `val buffer: Buffer = Buffer()`.
     // okio declares three `writeUtf8` and 503 calls chose between them.
@@ -4522,6 +4530,115 @@ pub(crate) fn declared_variable_types(
 /// The names a Java definition binds with a type: its parameters and every
 /// local declaration in its body. A name bound twice to different types is
 /// left out rather than guessed at.
+/// What a Rust body binds, read the way rust states types: a parameter
+/// states one always, and `let name: Type = ..` states one outright.
+/// `&`, `&mut`, `dyn`, `impl` and a lifetime are not part of the name.
+fn rust_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
+    let mut declared: BTreeMap<String, String> = BTreeMap::new();
+    let mut conflicting: BTreeSet<String> = BTreeSet::new();
+    let mut bound: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+        let (name, stated) = match current.kind() {
+            "parameter" | "let_declaration" => (
+                current.child_by_field_name("pattern"),
+                current.child_by_field_name("type"),
+            ),
+            _ => continue,
+        };
+        let (Some(name), Some(stated)) = (name, stated) else {
+            continue;
+        };
+        let Some(name) = node_text(name, source) else {
+            continue;
+        };
+        let name = name.trim().trim_start_matches("mut ").trim();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character.is_alphanumeric() || character == '_')
+        {
+            continue;
+        }
+        let Some(stated) = rust_type_name(stated, source) else {
+            continue;
+        };
+        bound.push((name.to_string(), stated));
+    }
+    for (name, stated) in bound {
+        if declared
+            .get(&name)
+            .is_some_and(|existing| existing != &stated)
+        {
+            conflicting.insert(name);
+            continue;
+        }
+        declared.insert(name, stated);
+    }
+    for name in conflicting {
+        declared.remove(&name);
+    }
+    // A name bound again without a type is not the one the signature
+    // described: `scope.is_none_or(|scope| ..)` reaches a `&ScanScope`
+    // where the parameter states an `Option`, and `let Some(cache) =
+    // cache else ..` unwraps one. Where a name is bound twice and one of
+    // them says nothing, nothing is what is known.
+    let mut rebound: BTreeSet<String> = BTreeSet::new();
+    let mut bodies = vec![node];
+    while let Some(current) = bodies.pop() {
+        let mut cursor = current.walk();
+        bodies.extend(current.named_children(&mut cursor));
+        let pattern = match current.kind() {
+            "closure_parameters" => Some(current),
+            "let_declaration" | "let_condition" | "for_expression" | "match_arm" => {
+                current.child_by_field_name("pattern").filter(|_| {
+                    current.kind() != "let_declaration"
+                        || current.child_by_field_name("type").is_none()
+                })
+            }
+            _ => None,
+        };
+        let Some(pattern) = pattern else {
+            continue;
+        };
+        let mut names = vec![pattern];
+        while let Some(part) = names.pop() {
+            let mut inner = part.walk();
+            names.extend(part.named_children(&mut inner));
+            if matches!(part.kind(), "identifier" | "closure_parameters")
+                && let Some(name) = node_text(part, source)
+            {
+                rebound.insert(name.trim().to_string());
+            }
+        }
+    }
+    for name in rebound {
+        declared.remove(&name);
+    }
+    declared
+}
+
+/// The bare name a Rust type expression states: `&dyn LanguageAdapter` is
+/// `LanguageAdapter`, `Vec<Node>` is `Vec`, `&'a str` is `str`.
+fn rust_type_name(node: Node<'_>, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "type_identifier" | "primitive_type" => node_text(node, source),
+        "reference_type" | "pointer_type" | "dynamic_type" | "array_type" | "slice_type" => node
+            .child_by_field_name("type")
+            .or_else(|| node.named_child(0))
+            .and_then(|inner| rust_type_name(inner, source)),
+        "generic_type" => node
+            .child_by_field_name("type")
+            .and_then(|inner| rust_type_name(inner, source)),
+        "scoped_type_identifier" => node
+            .child_by_field_name("name")
+            .and_then(|name| rust_type_name(name, source)),
+        _ => None,
+    }
+}
+
 fn java_declared_variable_types(node: Node<'_>, source: &[u8]) -> BTreeMap<String, String> {
     // A local of the same name as a field is what the line in front
     // means, so the definition's own bindings are read after the class's

@@ -4578,3 +4578,33 @@ fn a_file_that_is_not_utf8_is_still_source() {
         .unwrap();
     assert_eq!(delay.span.start_line, 2);
 }
+
+#[test]
+fn rust_states_the_type_of_what_a_signature_binds() {
+    // This repository's own `adapter.parse(..)` was read as `str::parse`
+    // because nothing said what `adapter` is, and 3328 rust calls through
+    // a named receiver are unsettled across ripgrep, serde and codegraph.
+    let source = br#"
+fn index(adapter: &dyn LanguageAdapter, options: &IndexOptions, scope: Option<&ScanScope>) {
+    let cache: SemanticLspCache = build();
+    adapter.parse(path, source);
+    options.walk();
+    cache.load(batch);
+    scope.is_none_or(|scope| scope.includes_directory(label));
+}
+"#;
+    let parsed = parse_source("src/scan.rs", source, Language::Rust).unwrap();
+    let stated = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.kind == ParsedItemKind::Call && item.label == label)
+            .and_then(|item| item.metadata.get("receiver_type").cloned())
+    };
+
+    assert_eq!(stated("adapter.parse").as_deref(), Some("LanguageAdapter"));
+    assert_eq!(stated("options.walk").as_deref(), Some("IndexOptions"));
+    assert_eq!(stated("cache.load").as_deref(), Some("SemanticLspCache"));
+    // A closure binds its own `scope`, and the `Option` above is not it.
+    assert_eq!(stated("scope.includes_directory"), None);
+}
