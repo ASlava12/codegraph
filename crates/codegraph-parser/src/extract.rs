@@ -2737,6 +2737,14 @@ pub(crate) fn visibility_label(
                     _ => break,
                 }
             }
+            // `const AudioModal = ..` and `export default AudioModal` two
+            // lines down are one declaration and its export. mastodon
+            // writes its components that way and each read as private, so
+            // "nothing here calls it" was said of a component the file
+            // hands out.
+            if js_file_exports_name(node, source, label) {
+                return Some("public");
+            }
             Some("private")
         }
         // Convention, but a convention the whole ecosystem reads as a
@@ -3624,6 +3632,33 @@ fn ruby_included_modules(node: Node<'_>, source: &[u8]) -> Vec<String> {
         }
     }
     included
+}
+
+/// Whether a javascript file exports a name in a statement of its own:
+/// `export default AudioModal`, `export { AudioModal }`, `export {
+/// AudioModal as Modal }`.
+fn js_file_exports_name(node: Node<'_>, source: &[u8], label: &str) -> bool {
+    let mut root = node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut cursor = root.walk();
+    root.named_children(&mut cursor).any(|statement| {
+        if statement.kind() != "export_statement" {
+            return false;
+        }
+        // A declaration inside the export is handled by the walk above;
+        // what is left is the export of a name declared elsewhere.
+        if statement.child_by_field_name("declaration").is_some() {
+            return false;
+        }
+        node_text(statement, source).is_some_and(|text| {
+            text.split(|character: char| {
+                !character.is_alphanumeric() && character != '_' && character != '$'
+            })
+            .any(|word| word == label)
+        })
+    })
 }
 
 pub(crate) fn base_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {

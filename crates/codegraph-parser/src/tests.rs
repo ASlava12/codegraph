@@ -4516,3 +4516,35 @@ class person
         "{labels:?}"
     );
 }
+
+#[test]
+fn a_name_the_file_exports_on_its_own_line_is_public() {
+    // mastodon declares its components and exports them two lines down,
+    // and 104 of them read as private -- so "nothing here calls it" was
+    // said of a component the file hands out.
+    let source = br#"
+const AudioModal: React.FC = () => null;
+
+function helper() {
+  return 1;
+}
+
+const Named = () => null;
+
+export default AudioModal;
+export { Named as Modal };
+"#;
+    let parsed = parse_source("app/javascript/audio_modal.tsx", source, Language::Tsx).unwrap();
+    let visibility = |label: &str| {
+        parsed
+            .items
+            .iter()
+            .find(|item| item.label == label)
+            .and_then(|item| item.metadata.get("visibility").cloned())
+    };
+
+    assert_eq!(visibility("AudioModal").as_deref(), Some("public"));
+    assert_eq!(visibility("Named").as_deref(), Some("public"));
+    // What the file keeps to itself is still its own.
+    assert_eq!(visibility("helper").as_deref(), Some("private"));
+}
