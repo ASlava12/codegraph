@@ -3527,7 +3527,28 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
                 && call.language != "ruby"
                 && method_of_every_value(&call.language, &call.label))
         {
+            // The language provides the member, and that is an answer
+            // rather than the absence of one: `calls.push(..)` and
+            // `parts.join("")` were filed as calls nothing could place,
+            // which reads as a resolver that failed where an array method
+            // was called. Unless the file says where the receiver came
+            // from -- `import path from 'path'` makes `path.join` node's
+            // rather than an array's, and the import is what says so.
             language_targets.clear();
+            let receiver_is_imported = call
+                .label
+                .split_once('.')
+                .map(|(receiver, _)| receiver)
+                .is_some_and(|receiver| {
+                    context
+                        .file_import_qualifiers
+                        .get(call.span.path.as_str())
+                        .is_some_and(|qualifiers| qualifiers.contains_key(receiver))
+                });
+            if !receiver_is_imported {
+                add_external_call_placeholder(context, call, "builtin");
+                continue;
+            }
         } else if call.language == "rust" && call.label.contains('.') {
             language_targets.retain(|target| {
                 graph_node(&context.graph, *target)

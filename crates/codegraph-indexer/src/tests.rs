@@ -20824,3 +20824,51 @@ fn a_standard_lua_name_is_the_languages_unless_the_project_replaces_it() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_member_the_language_provides_is_an_answer_not_a_failure() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("src")).unwrap();
+    // vue writes 202 `calls.push(..)` and ripgrep as many `iter()`: the
+    // rule already knew these belong to the language, and then filed them
+    // as calls nothing could place.
+    fs::write(
+        root.join("src").join("main.ts"),
+        r#"export class Recorder {
+  push(value: string) {
+    return value;
+  }
+
+  record(calls: string[], parts: string[]) {
+    calls.push("one");
+    this.push("two");
+    return parts.join("");
+  }
+}
+"#,
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    assert_eq!(resolution_of("calls.push"), "builtin");
+    assert_eq!(resolution_of("parts.join"), "builtin");
+    // `this` is the one receiver whose methods are the class's own.
+    assert_eq!(resolution_of("this.push"), "resolved");
+
+    fs::remove_dir_all(root).unwrap();
+}
