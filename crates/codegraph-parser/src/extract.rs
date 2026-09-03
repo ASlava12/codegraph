@@ -3580,7 +3580,63 @@ fn solidity_base_labels(node: Node<'_>, source: &[u8]) -> Option<String> {
     (!names.is_empty()).then(|| names.join(","))
 }
 
+/// The modules a Ruby class body includes. Ruby looks a bare call up
+/// through them as much as through the superclass: mastodon's controllers
+/// reach `log_action` and `pagination_params` from modules they include,
+/// and a class stated only by its superclass could not reach either.
+fn ruby_included_modules(node: Node<'_>, source: &[u8]) -> Vec<String> {
+    let Some(body) = node.child_by_field_name("body") else {
+        return Vec::new();
+    };
+    let mut included = Vec::new();
+    let mut cursor = body.walk();
+    for statement in body.named_children(&mut cursor) {
+        if statement.kind() != "call" {
+            continue;
+        }
+        let Some(method) = statement
+            .child_by_field_name("method")
+            .and_then(|method| node_text(method, source))
+        else {
+            continue;
+        };
+        if !matches!(method.trim(), "include" | "prepend" | "extend") {
+            continue;
+        }
+        let Some(arguments) = statement.child_by_field_name("arguments") else {
+            continue;
+        };
+        let mut argument_cursor = arguments.walk();
+        for argument in arguments.named_children(&mut argument_cursor) {
+            let Some(name) = node_text(argument, source) else {
+                continue;
+            };
+            let name = name.trim();
+            if name.is_empty()
+                || !name.chars().all(|character| {
+                    character.is_alphanumeric() || character == '_' || character == ':'
+                })
+                || !name.starts_with(char::is_uppercase)
+            {
+                continue;
+            }
+            included.push(name.to_string());
+        }
+    }
+    included
+}
+
 pub(crate) fn base_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+    if language == Language::Ruby {
+        let mut names: Vec<String> = child_kind_text(node, "superclass", source)
+            .map(|text| text.trim().trim_start_matches('<').trim().to_string())
+            .into_iter()
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.extend(ruby_included_modules(node, source));
+        names.dedup();
+        return (!names.is_empty()).then(|| names.join(","));
+    }
     let text = match language {
         // The grammar gives each of these a child of its own holding the
         // whole clause: `< Foo`, `extends Foo`, `: Foo, IBar`, `(Base)`.

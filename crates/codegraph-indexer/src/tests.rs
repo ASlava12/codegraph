@@ -20872,3 +20872,75 @@ fn a_member_the_language_provides_is_an_answer_not_a_failure() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_bare_ruby_call_is_answered_by_what_the_class_descends_from() {
+    let root = temp_project_root();
+    fs::create_dir_all(root.join("app").join("controllers").join("admin")).unwrap();
+    fs::create_dir_all(root.join("app").join("controllers").join("concerns")).unwrap();
+    fs::create_dir_all(root.join("app").join("lib")).unwrap();
+    // mastodon's `Admin::AccountsController` reaches `log_action` through a
+    // concern its base includes, and `head` through Rails.
+    fs::write(
+        root.join("app")
+            .join("controllers")
+            .join("concerns")
+            .join("accountable_concern.rb"),
+        "module AccountableConcern\n  def log_action(action, target)\n    action\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("controllers")
+            .join("admin")
+            .join("base_controller.rb"),
+        "module Admin\n  class BaseController < ApplicationController\n    include AccountableConcern\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("app")
+            .join("controllers")
+            .join("admin")
+            .join("accounts_controller.rb"),
+        "module Admin\n  class AccountsController < BaseController\n    def update\n      log_action(:update, @account)\n      head(204)\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    // An unrelated class declares `head` too, and the controller cannot
+    // reach it.
+    fs::write(
+        root.join("app")
+            .join("lib")
+            .join("link_details_extractor.rb"),
+        "class LinkDetailsExtractor\n  def head\n    @head\n  end\nend\n",
+    )
+    .unwrap();
+
+    let graph = scan_project(&root, &IndexOptions::default()).unwrap();
+    let resolution_of = |call_label: &str| {
+        graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == EdgeKind::Calls
+                    && edge
+                        .metadata
+                        .get("call_label")
+                        .is_some_and(|label| label == call_label)
+            })
+            .and_then(|edge| edge.metadata.get("resolution").cloned())
+            .unwrap_or_else(|| panic!("no call edge for {call_label}"))
+    };
+
+    assert_eq!(
+        resolution_of("log_action"),
+        "resolved",
+        "the concern the base includes is in the ancestry"
+    );
+    assert_eq!(
+        resolution_of("head"),
+        "external",
+        "an unrelated class's method is not in it"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}

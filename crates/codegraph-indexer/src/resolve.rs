@@ -3091,6 +3091,15 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
     // Asked once per call and per candidate, so it is read off the node
     // list once rather than three times per question.
     let type_names = type_nodes_by_name(&context.graph);
+    // Every type label as written, for the questions a tail must not
+    // answer: `ActiveRecord::Base` is not `Trends::Base`.
+    let declared_type_labels: BTreeSet<String> = context
+        .graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == NodeKind::Type)
+        .map(|node| node.label.clone())
+        .collect();
     // The standard-library names this project replaces, from the files
     // that replace them: kong patches `math.randomseed` and calls it ten
     // times, and that call is the project's own.
@@ -3484,6 +3493,62 @@ pub(crate) fn resolve_pending_calls(context: &mut IndexContext) {
             call.receiver_call.as_deref().is_some_and(|handed_back| {
                 test_runner_provides_call(&call.language, &call.span.path, handed_back)
             });
+        // Ruby answers a bare call from the ancestry of `self`, and a
+        // class that descends from outside the project is answered by what
+        // it descends from: `save`, `update`, `reload` and `id` inside
+        // `Account < ApplicationRecord` are ActiveRecord's, whatever
+        // unrelated class of mastodon's declares a method by that name.
+        // 910 `id` calls, 572 `account` and 353 `render` read as a choice
+        // between definitions the caller cannot reach.
+        if call.language == "ruby"
+            && !call.label.contains('.')
+            && !call.label.contains("::")
+            && !call.receiver_is_a_value
+            && call.receiver.is_none()
+            && !language_targets.is_empty()
+            && let Some(owner) = graph_node(&context.graph, call.caller)
+                .and_then(|node| node.metadata.get("owner_type").cloned())
+        {
+            let ancestors = ancestor_type_names(&context.graph, &type_names, &owner);
+            // Asked of the name as written: the type index answers by the
+            // tail of a qualified label too, and mastodon declares a
+            // `Trends::Base`, which made `ActiveRecord::Base` look like a
+            // class of its own.
+            let descends_from_outside = !ancestors.is_empty()
+                && ancestors.iter().any(|name| {
+                    if name.contains("::") {
+                        // A qualified name says exactly which type it is,
+                        // and the index would answer `ActiveRecord::Base`
+                        // with mastodon's own `Trends::Base`.
+                        !declared_type_labels.contains(name.as_str())
+                    } else {
+                        // An unqualified one is read in the scope it sits
+                        // in: `class AccountsController < BaseController`
+                        // inside `module Admin` means
+                        // `Admin::BaseController`.
+                        type_node_named(&context.graph, &type_names, name).is_none()
+                    }
+                });
+            // A definition states its owner as the file writes it, and an
+            // ancestor may carry the namespace the walk added: mastodon
+            // declares `parallelize_with_progress` in `ProgressHelper` and
+            // reaches it as `Mastodon::CLI::ProgressHelper`.
+            let same_type = |left: &str, right: &str| {
+                left == right || left.rsplit("::").next() == right.rsplit("::").next()
+            };
+            let reachable = |target: &NodeId| {
+                graph_node(&context.graph, *target)
+                    .and_then(|node| node.metadata.get("owner_type"))
+                    .is_some_and(|declared| {
+                        same_type(declared, &owner)
+                            || ancestors.iter().any(|name| same_type(declared, name))
+                    })
+            };
+            if descends_from_outside && !language_targets.iter().any(reachable) {
+                add_external_call_placeholder(context, call, "external");
+                continue;
+            }
+        }
         // A name the language provides is not a choice between the
         // project's declarations: kong writes 143 `table.insert` calls and
         // declares an `insert` of its own, and the two are unrelated. A
@@ -6305,8 +6370,12 @@ fn ancestor_type_names(graph: &CodeGraph, types: &TypeNodesByName, owner: &str) 
     // `EIP712._hashTypedDataV4` through the second of them, so the walk
     // follows every base a declaration names rather than the first.
     let mut queue: VecDeque<String> = VecDeque::from([owner.to_string()]);
-    // A hierarchy this deep is already unusual, and a cycle cannot be one.
-    while names.len() < 8 {
+    // A hierarchy this long is already unusual, and a cycle cannot be
+    // one. Ruby counts every module a class includes among its ancestors,
+    // and mastodon's `Account` includes twenty -- a cap of eight cut the
+    // list before `AccountableConcern`, whose `log_action` the class does
+    // reach.
+    while names.len() < 64 {
         let Some(current) = queue.pop_front() else {
             break;
         };
@@ -6320,6 +6389,18 @@ fn ancestor_type_names(graph: &CodeGraph, types: &TypeNodesByName, owner: &str) 
             .map(str::trim)
             .filter(|name| !name.is_empty())
         {
+            // A name written without its namespace is read in the one it
+            // sits in: `class AccountsController < BaseController` inside
+            // `module Admin` means `Admin::BaseController`, and matching
+            // on the tail alone could answer with `Api::BaseController`
+            // just as well -- which does not include the concern the call
+            // reaches.
+            let qualified = current
+                .rsplit_once("::")
+                .filter(|_| !parent.contains("::"))
+                .map(|(namespace, _)| format!("{namespace}::{parent}"))
+                .filter(|candidate| types.contains_key(candidate.as_str()));
+            let parent = qualified.as_deref().unwrap_or(parent);
             if parent == owner || parent == current || names.iter().any(|seen| seen == parent) {
                 continue;
             }
