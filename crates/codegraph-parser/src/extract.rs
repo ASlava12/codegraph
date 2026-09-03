@@ -3662,6 +3662,39 @@ fn js_file_exports_name(node: Node<'_>, source: &[u8], label: &str) -> bool {
 }
 
 pub(crate) fn base_type_label(language: Language, node: Node<'_>, source: &[u8]) -> Option<String> {
+    // A php class states what it extends and what it implements in two
+    // clauses, and reading the first name of the first clause dropped
+    // every interface: koel's casts are `implements CastsAttributes`,
+    // which is the name Laravel calls them through, and `class Album
+    // extends Model implements AuditableContract, Embeddable` states four
+    // things a call can arrive by.
+    if language == Language::Php {
+        let mut names: Vec<String> = Vec::new();
+        for (kind, keyword) in [
+            ("base_clause", "extends"),
+            ("class_interface_clause", "implements"),
+        ] {
+            let Some(text) = child_kind_text(node, kind, source) else {
+                continue;
+            };
+            let text = text.trim();
+            let text = text.strip_prefix(keyword).unwrap_or(text);
+            names.extend(
+                text.split(',')
+                    .map(|name| name.trim().trim_start_matches('\\'))
+                    .filter(|name| {
+                        !name.is_empty()
+                            && name.chars().all(|character| {
+                                character.is_alphanumeric()
+                                    || matches!(character, '_' | '\\' | ':' | '.')
+                            })
+                    })
+                    .map(|name| name.rsplit('\\').next().unwrap_or(name).to_string()),
+            );
+        }
+        names.dedup();
+        return (!names.is_empty()).then(|| names.join(","));
+    }
     if language == Language::Ruby {
         let mut names: Vec<String> = child_kind_text(node, "superclass", source)
             .map(|text| text.trim().trim_start_matches('<').trim().to_string())

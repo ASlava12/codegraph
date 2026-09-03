@@ -495,6 +495,21 @@ function buildClientInsights(graph) {
       .map((node) => [node.label, node.id]),
   );
   const typeIds = new Set(typeIdsByLabel.values());
+  // A class states what it descends from and what it implements, and a
+  // name it states that this project does not declare is a hierarchy that
+  // leaves it: koel's models extend Laravel's `Model`. The CLI reads the
+  // same metadata.
+  const hierarchyLeavesTheProject = new Set(
+    graph.nodes
+      .filter((node) => node.kind === "type" || node.kind === "module")
+      .filter((node) =>
+        String(node.metadata?.extends ?? "")
+          .split(",")
+          .map((base) => base.trim())
+          .some((base) => base !== "" && !typeIdsByLabel.has(base)),
+      )
+      .map((node) => node.label),
+  );
   const reachedTypeIds = new Set(
     graph.edges
       .filter((edge) => edge.kind !== "contains" && typeIds.has(edge.target))
@@ -542,6 +557,13 @@ function buildClientInsights(graph) {
     // A haskell data constructor is named after itself rather than after a
     // keyword, and building a value of a type something reaches uses them
     // the same way. The CLI skips those too.
+    // A protected method cannot be reached from outside its own
+    // hierarchy, so when that hierarchy leaves the project, "nothing here
+    // calls it" is not what it sounds like: koel overrides Eloquent's
+    // `casts()` in sixteen models. The CLI skips these too.
+    const reachedFromOutsideItsHierarchy =
+      node.metadata?.visibility === "protected" &&
+      hierarchyLeavesTheProject.has(node.metadata?.owner_type);
     const builtByItsClass =
       (["__construct", "constructor", "__init__"].includes(node.label) ||
         node.metadata?.definition_form === "constructor") &&
@@ -555,6 +577,7 @@ function buildClientInsights(graph) {
       node.kind === "function" &&
       !nobodysToDelete &&
       !builtByItsClass &&
+      !reachedFromOutsideItsHierarchy &&
       !node.metadata?.enclosing_function &&
       // `const onMounted = createHook(MOUNTED)` declares a value a factory
       // built, and a value nobody calls is a value rather than a function

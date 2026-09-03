@@ -1002,7 +1002,38 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
         .map(|node| (node.label.as_str(), node.id))
         .collect();
 
+    // A class states what it descends from and what it implements, and a
+    // name it states that this project does not declare is a hierarchy
+    // that leaves it: koel's models extend Laravel's `Model`.
+    let hierarchy_leaves_the_project: BTreeSet<&str> = graph
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, NodeKind::Type | NodeKind::Module))
+        .filter(|node| {
+            node.metadata.get("extends").is_some_and(|bases| {
+                bases
+                    .split(',')
+                    .map(str::trim)
+                    .any(|base| !base.is_empty() && !type_ids.contains_key(base))
+            })
+        })
+        .map(|node| node.label.as_str())
+        .collect();
+
     for node in &graph.nodes {
+        // A protected method cannot be reached from outside its own
+        // hierarchy, so when that hierarchy leaves the project, "nothing
+        // here calls it" is not what it sounds like: koel overrides
+        // Eloquent's `casts()` in sixteen models, and Laravel is what
+        // calls it.
+        if node.metadata.get("visibility").map(String::as_str) == Some("protected")
+            && node
+                .metadata
+                .get("owner_type")
+                .is_some_and(|owner| hierarchy_leaves_the_project.contains(owner.as_str()))
+        {
+            continue;
+        }
         // Building a class runs its constructor, and a framework builds
         // most of them: koel's container instantiates 208 classes whose
         // `__construct` no `new` in the repository names. A class nothing

@@ -17491,3 +17491,62 @@ fn a_package_the_lockfile_explains_is_not_reported_unused() {
         "a package with no namespace of its own in use is still worth saying"
     );
 }
+
+#[test]
+fn a_protected_method_of_a_hierarchy_that_leaves_the_project_is_not_an_orphan() {
+    let mut graph = CodeGraph::new("repo");
+    let span = |path: &str| SourceSpan {
+        path: path.to_string(),
+        start_line: 1,
+        start_column: 1,
+        end_line: 2,
+        end_column: 1,
+    };
+    let class = |graph: &mut CodeGraph, label: &str, extends: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Type,
+            label,
+            Some(span("src/model.cs")),
+            BTreeMap::from([("extends".to_string(), extends.to_string())]),
+        )
+    };
+    let method = |graph: &mut CodeGraph, label: &str, owner: &str, visibility: &str| {
+        graph.add_node_with_metadata(
+            NodeKind::Function,
+            label,
+            Some(span("src/model.cs")),
+            BTreeMap::from([
+                ("owner_type".to_string(), owner.to_string()),
+                ("visibility".to_string(), visibility.to_string()),
+            ]),
+        )
+    };
+    // eShopOnWeb overrides `OnModelCreating` on a context that descends
+    // from EF Core, and EF Core is what calls it.
+    class(&mut graph, "CatalogContext", "DbContext");
+    let framework_override = method(&mut graph, "OnModelCreating", "CatalogContext", "protected");
+    // A class that descends from one this project declares is a different
+    // matter: nothing outside can reach the method.
+    class(&mut graph, "BaseService", "");
+    class(&mut graph, "CatalogService", "BaseService");
+    let own_protected = method(&mut graph, "Recalculate", "CatalogService", "protected");
+
+    let report = insights(&graph);
+    let reported = |id| {
+        report.insights.iter().any(|insight| {
+            matches!(
+                insight.kind.as_str(),
+                "orphan_function" | "export_with_no_local_caller"
+            ) && insight.nodes.contains(&id)
+        })
+    };
+
+    assert!(
+        !reported(framework_override),
+        "a protected override of a base this project does not declare is reached from there"
+    );
+    assert!(
+        reported(own_protected),
+        "a hierarchy the project declares is one it can be asked about"
+    );
+}
