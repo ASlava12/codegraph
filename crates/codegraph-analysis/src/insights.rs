@@ -1123,18 +1123,26 @@ pub(crate) fn add_orphan_function_insights(graph: &CodeGraph, insights: &mut Vec
             // whose callers this repository could see and does not have is
             // `orphan_function`; the one whose callers it cannot see is
             // its own kind, and neither buries the other now.
+            // A name says little on its own where a language shares it
+            // across types: koel declares 36 `__construct` and sixteen
+            // `casts`, and "Function `__construct` has no incoming call
+            // edge" repeated is not a report anyone can act on. The type
+            // it belongs to is what tells them apart.
+            let named = match node.metadata.get("owner_type") {
+                Some(owner) => format!("Function `{}` of `{owner}`", node.label),
+                None => format!("Function `{}`", node.label),
+            };
             let (kind, message) = if exported {
                 (
                     "export_with_no_local_caller",
                     format!(
-                        "Function `{}` has no incoming call edge; it is exported, so its callers may be outside this repository",
-                        node.label
+                        "{named} has no incoming call edge; it is exported, so its callers may be outside this repository"
                     ),
                 )
             } else {
                 (
                     "orphan_function",
-                    format!("Function `{}` has no incoming call edge", node.label),
+                    format!("{named} has no incoming call edge"),
                 )
             };
             insights.push(Insight {

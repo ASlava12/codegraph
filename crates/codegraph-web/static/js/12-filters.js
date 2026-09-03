@@ -602,6 +602,11 @@ function buildClientInsights(graph) {
       node.metadata?.may_be_called_by !== "unsettled_call"
     ) {
       const exported = node.metadata?.visibility === "public";
+      // A name says little on its own where a language shares it across
+      // types: koel declares 36 `__construct`. The CLI names the type too.
+      const namedDefinition = node.metadata?.owner_type
+        ? `${node.label} of ${node.metadata.owner_type}`
+        : node.label;
       insights.push({
         // Dead or the API. They were one kind, so a reader asking what can
         // be deleted got the API as well: terraform's actionable count
@@ -610,8 +615,8 @@ function buildClientInsights(graph) {
         kind: exported ? "export_with_no_local_caller" : "orphan_function",
         severity: "info",
         message: exported
-          ? `${node.label} has no incoming call edge; it is exported, so its callers may be outside this repository`
-          : `${node.label} has no incoming call edge`,
+          ? `${namedDefinition} has no incoming call edge; it is exported, so its callers may be outside this repository`
+          : `${namedDefinition} has no incoming call edge`,
         nodeId: node.id,
       });
     }
