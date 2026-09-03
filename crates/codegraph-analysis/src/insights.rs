@@ -4059,6 +4059,16 @@ impl UndeclaredImportGroup {
 pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut Vec<Insight>) {
     let nodes_by_id = node_index(graph);
     let used_packages = dependency_usage_packages(graph);
+    // What every php import names, so a package can be recognised by the
+    // namespace it ships rather than by its own name.
+    let php_imports: Vec<String> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.kind == EdgeKind::Imports)
+        .filter_map(|edge| nodes_by_id.get(&edge.target).copied())
+        .filter(|node| node.metadata.get("language").map(String::as_str) == Some("php"))
+        .filter_map(|node| php_imported_class(&node.label))
+        .collect();
     let used_ecosystems: BTreeSet<_> = used_packages
         .iter()
         .map(|(_, import)| import.ecosystem.as_str())
@@ -4092,6 +4102,32 @@ pub(crate) fn add_unused_dependency_insights(graph: &CodeGraph, insights: &mut V
         if used_packages
             .iter()
             .any(|(_, import)| import_matches_package_id(package_id, import))
+        {
+            continue;
+        }
+        // Some packages are loaded without anyone importing them, and the
+        // lockfile says which: composer requires what `autoload.files`
+        // names on every request, and laravel registers what
+        // `extra.laravel.providers` names at boot.
+        if dependency.metadata.contains_key("loaded_without_import") {
+            continue;
+        }
+        // A composer lockfile states which namespaces each package
+        // autoloads, and that is the only place the mapping is written
+        // down: `laravel/framework` answers to `Illuminate\`, which no
+        // rule about names could work out. koel was told 26 times that it
+        // declares a package nothing imports while every request it serves
+        // goes through one of them.
+        if dependency
+            .metadata
+            .get("autoloaded_namespaces")
+            .is_some_and(|namespaces| {
+                namespaces
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|namespace| !namespace.is_empty())
+                    .any(|namespace| php_imports.iter().any(|class| class.starts_with(namespace)))
+            })
         {
             continue;
         }

@@ -89,6 +89,14 @@ pub(crate) fn index_manifest_dependencies(
                 dependency.namespaces.join(","),
             );
         }
+        if let Some(loaded_by) = dependency.loaded_without_import.clone() {
+            add_node_metadata(
+                &mut context.graph,
+                dependency_id,
+                "loaded_without_import",
+                loaded_by,
+            );
+        }
 
         let mut edge_metadata = BTreeMap::new();
         edge_metadata.insert("dependency_kind".to_string(), dependency.kind);
@@ -2418,6 +2426,27 @@ pub(crate) fn collect_composer_lock_packages(
             Some("locked"),
         );
         dependency.namespaces = namespaces;
+        // Some packages are never imported and never unused: composer
+        // requires what `autoload.files` names on every request, and
+        // laravel registers what `extra.laravel.providers` names at boot.
+        // koel installs six of them -- `laravel/tinker`,
+        // `nunomaduro/collision`, `laravel/helpers` among them.
+        let registers_itself = package
+            .get("extra")
+            .and_then(|extra| extra.get("laravel"))
+            .and_then(|laravel| laravel.get("providers"))
+            .and_then(|providers| providers.as_array())
+            .is_some_and(|providers| !providers.is_empty());
+        let autoloads_files = package
+            .get("autoload")
+            .and_then(|autoload| autoload.get("files"))
+            .and_then(|files| files.as_array())
+            .is_some_and(|files| !files.is_empty());
+        dependency.loaded_without_import = match (registers_itself, autoloads_files) {
+            (true, _) => Some("framework".to_string()),
+            (_, true) => Some("autoloader".to_string()),
+            _ => None,
+        };
         dependencies.push(dependency);
     }
 }
@@ -4374,6 +4403,7 @@ pub(crate) fn manifest_dependency_with_version_kind(
         version,
         version_kind,
         namespaces: Vec::new(),
+        loaded_without_import: None,
     }
 }
 

@@ -17422,3 +17422,72 @@ fn a_lock_file_declares_nothing_and_a_platform_is_not_a_library() {
         "a library the manifest declares and nothing imports is still worth saying"
     );
 }
+
+#[test]
+fn a_package_the_lockfile_explains_is_not_reported_unused() {
+    let mut graph = CodeGraph::new("repo");
+    let manifest = graph.add_node(NodeKind::File, "composer.json");
+    let file = graph.add_node(NodeKind::File, "app/Song.php");
+    let named = |graph: &mut CodeGraph, name: &str, metadata: Vec<(&str, &str)>| {
+        let mut fields = BTreeMap::from([
+            ("item_kind".to_string(), "dependency".to_string()),
+            ("package_id".to_string(), format!("composer:{name}")),
+        ]);
+        for (key, value) in metadata {
+            fields.insert(key.to_string(), value.to_string());
+        }
+        graph.add_node_with_metadata(NodeKind::ExternalDependency, name, None, fields)
+    };
+    // `laravel/framework` answers to `Illuminate\`, which no rule about
+    // names could work out; `laravel/tinker` registers a service provider
+    // and is never imported at all.
+    let framework = named(
+        &mut graph,
+        "laravel/framework",
+        vec![("autoloaded_namespaces", "Illuminate\\")],
+    );
+    let tinker = named(
+        &mut graph,
+        "laravel/tinker",
+        vec![
+            ("autoloaded_namespaces", "Laravel\\Tinker\\"),
+            ("loaded_without_import", "framework"),
+        ],
+    );
+    let unused = named(&mut graph, "doctrine/dbal", vec![]);
+    for dependency in [framework, tinker, unused] {
+        graph.add_edge_with_metadata(
+            manifest,
+            dependency,
+            EdgeKind::DependsOn,
+            Confidence::Exact,
+            BTreeMap::from([("dependency_kind".to_string(), "runtime".to_string())]),
+        );
+    }
+    let import = import_node(
+        &mut graph,
+        "use Illuminate\\Database\\Eloquent\\Model;",
+        "php",
+    );
+    graph.add_edge(file, import, EdgeKind::Imports, Confidence::Syntactic);
+
+    let report = insights(&graph);
+    let reported = |name: &str| {
+        report.insights.iter().any(|insight| {
+            insight.kind == "unused_declared_dependency" && insight.message.contains(name)
+        })
+    };
+
+    assert!(
+        !reported("laravel/framework"),
+        "the lockfile names Illuminate\\"
+    );
+    assert!(
+        !reported("laravel/tinker"),
+        "the framework registers it at boot"
+    );
+    assert!(
+        reported("doctrine/dbal"),
+        "a package with no namespace of its own in use is still worth saying"
+    );
+}

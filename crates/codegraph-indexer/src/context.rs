@@ -597,6 +597,11 @@ pub(crate) struct ManifestDependency {
     /// them: `composer.lock` says `laravel/framework` answers to
     /// `Illuminate\`, which no name-matching rule could work out.
     pub(crate) namespaces: Vec<String>,
+    /// How the package is loaded when no file imports it, where the
+    /// lockfile says so: composer autoloads `autoload.files` on every
+    /// request, and a framework registers what `extra.laravel.providers`
+    /// names at boot.
+    pub(crate) loaded_without_import: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
